@@ -292,9 +292,13 @@ CUSTOM_CVAR (String, vid_cursor, "None", CVAR_ARCHIVE | CVAR_NOINITCALL)
 }
 
 // Controlled by startup dialog
-CVAR(Bool, disableautoload, false, CVAR_ARCHIVE | CVAR_NOINITCALL | CVAR_GLOBALCONFIG)
-CVAR(Bool, autoloadbrightmaps, false, CVAR_ARCHIVE | CVAR_NOINITCALL | CVAR_GLOBALCONFIG)
-CVAR(Bool, autoloadlights, false, CVAR_ARCHIVE | CVAR_NOINITCALL | CVAR_GLOBALCONFIG)
+CVAR(Float, ai_update_interval, 0.1f, CVAR_GLOBALCONFIG | CVAR_ARCHIVE) // інтервал оновлення в секундах
+CVAR(Int, ai_max_monsters, 10, CVAR_GLOBALCONFIG | CVAR_ARCHIVE) // максимальна кількість монстрів для відстеження
+CVAR(Int, ai_max_distance, 1000, CVAR_GLOBALCONFIG | CVAR_ARCHIVE) // максимальна відстань для виявлення
+CVAR(Bool, ai_debug_info, false, CVAR_GLOBALCONFIG | CVAR_ARCHIVE) // чи показувати дебаг інформацію
+CVAR(Bool, ai_use_mcp, true, CVAR_GLOBALCONFIG | CVAR_ARCHIVE) // чи використовувати MCP для передачі даних
+CVAR(Int, ai_mcp_port, 12345, CVAR_GLOBALCONFIG | CVAR_ARCHIVE) // порт для MCP сервера
+CVAR(String, ai_mcp_address, "localhost", CVAR_GLOBALCONFIG | CVAR_ARCHIVE) // адреса MCP сервера
 CVAR(Bool, autoloadwidescreen, true, CVAR_ARCHIVE | CVAR_NOINITCALL | CVAR_GLOBALCONFIG)
 CVAR(Bool, r_debug_disable_vis_filter, false, 0)
 CVAR(Int, vid_showpalette, 0, 0)
@@ -1193,12 +1197,6 @@ void D_ErrorCleanup ()
 //
 // Manages timing and IO, calls all ?_Responder, ?_Ticker, and ?_Drawer,
 // calls I_GetTime, I_StartFrame, and I_StartTic
-//
-//==========================================================================
-
-void D_DoomLoop ()
-{
-	int lasttic = 0;
 
 	// Clamp the timer to TICRATE until the playloop has been entered.
 	r_NoInterpolate = true;
@@ -1214,15 +1212,33 @@ void D_DoomLoop ()
 		{
 			GStrings.SetDefaultGender(players[consoleplayer].userinfo.GetGender()); // cannot be done when the CVAR changes because we don't know if it's for the consoleplayer.
 
-			// frame syncronous IO operations
-			if (gametic > lasttic)
-			{
-				lasttic = gametic;
-				I_StartFrame ();
-			}
-			I_SetFrameTime();
+			            // frame syncronous IO operations
+            if (gametic > lasttic)
+            {
+                lasttic = gametic;
+                I_StartFrame ();
+            }
+            if (wantToRestart)
+            {
+                wantToRestart = false;
+                // Завершуємо роботу MCP сервера
+                AI_Shutdown();
+                return;
+            }
+            I_SetFrameTime();
 
-			TryRunTics (); // will run at least one tic
+            TryRunTics ();
+            
+            // Оновлюємо інформацію про монстрів та навколишнє середовище
+            for (int i = 0; i < MAXPLAYERS; i++)
+            {
+                if (players[i].mo)
+                {
+                    UpdateVisibleObjects(&players[i]);
+                    UpdateEnvironmentInfo(&players[i]);
+                    TrackMonsters(&players[i]);
+                }
+            } 
 			// Update display, next frame, with current state.
 			I_StartTic ();
 			D_ProcessEvents();
@@ -1231,6 +1247,8 @@ void D_DoomLoop ()
 			if (wantToRestart)
 			{
 				wantToRestart = false;
+				// Завершуємо роботу MCP сервера
+                AI_Shutdown();
 				return;
 			}
 		}
