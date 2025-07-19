@@ -2,7 +2,6 @@
 
 #include "d_player.h"
 #include "p_sightinfo.h"
-#include "mcp.h"
 
 // Конфігурація системи AI
 struct AIConfig

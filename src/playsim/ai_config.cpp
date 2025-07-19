@@ -1,5 +1,4 @@
 #include "ai_config.h"
-#include "mcp.h"
 
 // Глобальна конфігурація
 AIConfig g_ai_config;

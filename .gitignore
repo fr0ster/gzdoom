@@ -33,3 +33,4 @@
 /build__
 gzdoom-crash.log
 vcpkg_installed/
+build_logs/*

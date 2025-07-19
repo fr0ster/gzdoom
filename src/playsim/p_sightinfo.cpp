@@ -1,6 +1,5 @@
 #include "p_sightinfo.h"
 #include "ai_config.h"
-#include "mcp.h"
 
 // Оновлюємо список видимих об'єктів
 void UpdateVisibleObjects(player_t* player)

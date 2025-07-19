@@ -118,6 +118,7 @@
 #include "screenjob.h"
 #include "startscreen.h"
 #include "shiftstate.h"
+#include "playsim/ai_config.h"
 
 #ifdef __unix__
 #include "i_system.h"  // for SHARE_DIR
@@ -185,10 +186,19 @@ bool OkForLocalization(FTextureID texnum, const char* substitute);
 void D_DoomLoop ();
 
 // AI system function stubs
-void AI_Shutdown() { /* AI shutdown logic */ }
-void UpdateVisibleObjects(player_t* player) { /* Update visible objects for AI */ }
-void UpdateEnvironmentInfo(player_t* player) { /* Update environment info for AI */ }
-void TrackMonsters(player_t* player) { /* Track monsters for AI */ }
+void AI_Shutdown() { Printf("AI_Shutdown called\n"); }
+void UpdateVisibleObjects(player_t* player) { 
+    static int call_count = 0;
+    if (++call_count % 350 == 0) Printf("UpdateVisibleObjects called %d times\n", call_count);
+}
+void UpdateEnvironmentInfo(player_t* player) { 
+    static int call_count = 0;
+    if (++call_count % 350 == 0) Printf("UpdateEnvironmentInfo called %d times\n", call_count);
+}
+void TrackMonsters(player_t* player) { 
+    static int call_count = 0;
+    if (++call_count % 350 == 0) Printf("TrackMonsters called %d times\n", call_count);
+}
 
 // EXTERNAL DATA DECLARATIONS ----------------------------------------------
 
@@ -3765,6 +3775,11 @@ static int D_DoomMain_Internal (void)
 		delete iwad_man;	// now we won't need this anymore
 		iwad_man = NULL;
 		if (ret != 0) return ret;
+
+		// Ініціалізуємо AI систему
+		Printf("Initializing AI system...\n");
+		AI_Init();
+		Printf("AI system initialized.\n");
 
 		D_DoAnonStats();
 		I_UpdateWindowTitle();

@@ -1,10 +1,7 @@
 #pragma once
 
 #include "d_player.h"
-#include "p_sight.h"
-#include "p_maputl.h"
-#include "p_spec.h"
-#include "p_setup.h"
+#include "p_local.h"
 
 // Структури вже визначені в d_player.h
 // Додаємо нові функції для роботи з даними
