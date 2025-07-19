@@ -184,6 +184,12 @@ bool OkForLocalization(FTextureID texnum, const char* substitute);
 
 void D_DoomLoop ();
 
+// AI system function stubs
+void AI_Shutdown() { /* AI shutdown logic */ }
+void UpdateVisibleObjects(player_t* player) { /* Update visible objects for AI */ }
+void UpdateEnvironmentInfo(player_t* player) { /* Update environment info for AI */ }
+void TrackMonsters(player_t* player) { /* Track monsters for AI */ }
+
 // EXTERNAL DATA DECLARATIONS ----------------------------------------------
 
 EXTERN_CVAR (Float, turbo)
@@ -198,11 +204,15 @@ EXTERN_CVAR (Bool, r_drawplayersprites)
 EXTERN_CVAR (Bool, show_messages)
 EXTERN_CVAR(Bool, ticker)
 EXTERN_CVAR(Bool, vid_fps)
+CVAR(Bool, autoloadlights, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, autoloadbrightmaps, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, disableautoload, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 extern bool setmodeneeded;
 extern bool demorecording;
 bool M_DemoNoPlay;	// [RH] if true, then skip any demos in the loop
 extern bool insave;
+static int lasttic = 0; // For AI frame timing
 extern TDeletingArray<FLightDefaults *> LightDefaults;
 extern FName MessageBoxClass;
 
@@ -1197,7 +1207,11 @@ void D_ErrorCleanup ()
 //
 // Manages timing and IO, calls all ?_Responder, ?_Ticker, and ?_Drawer,
 // calls I_GetTime, I_StartFrame, and I_StartTic
+//
+//==========================================================================
 
+void D_DoomLoop()
+{
 	// Clamp the timer to TICRATE until the playloop has been entered.
 	r_NoInterpolate = true;
 	Page.SetInvalid();
