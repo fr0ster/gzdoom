@@ -98,6 +98,7 @@
 #include "types.h"
 #include "i_system.h"
 #include "g_cvars.h"
+#include "playsim/ai_config.h"
 #include "r_data/r_vanillatrans.h"
 #include "s_music.h"
 #include "swrenderer/r_swcolormaps.h"
@@ -186,18 +187,37 @@ bool OkForLocalization(FTextureID texnum, const char* substitute);
 void D_DoomLoop ();
 
 // AI system function stubs
-void AI_Shutdown() { Printf("AI_Shutdown called\n"); }
-void UpdateVisibleObjects(player_t* player) { 
-    static int call_count = 0;
-    if (++call_count % 350 == 0) Printf("UpdateVisibleObjects called %d times\n", call_count);
+void AI_Shutdown() 
+{ 
+    // Використовуємо AI_Log з ai_config.cpp для логування
+    AI_Log(AI_DEBUG_INFO, "AI_Shutdown called\n"); 
 }
-void UpdateEnvironmentInfo(player_t* player) { 
+void UpdateVisibleObjects(player_t* player) 
+{ 
     static int call_count = 0;
-    if (++call_count % 350 == 0) Printf("UpdateEnvironmentInfo called %d times\n", call_count);
+    call_count++;
+    
+    // Використовуємо налаштування log_frequency з конфігурації
+    if (g_ai_config.debug_info && call_count % g_ai_config.log_frequency == 0) 
+        AI_Log(AI_DEBUG_VERBOSE, "UpdateVisibleObjects called %d times\n", call_count);
 }
-void TrackMonsters(player_t* player) { 
+void UpdateEnvironmentInfo(player_t* player) 
+{ 
     static int call_count = 0;
-    if (++call_count % 350 == 0) Printf("TrackMonsters called %d times\n", call_count);
+    call_count++;
+    
+    // Використовуємо налаштування log_frequency з конфігурації
+    if (g_ai_config.debug_info && call_count % g_ai_config.log_frequency == 0) 
+        AI_Log(AI_DEBUG_VERBOSE, "UpdateEnvironmentInfo called %d times\n", call_count);
+}
+void TrackMonsters(player_t* player) 
+{ 
+    static int call_count = 0;
+    call_count++;
+    
+    // Використовуємо налаштування log_frequency з конфігурації
+    if (g_ai_config.debug_info && call_count % g_ai_config.log_frequency == 0) 
+        AI_Log(AI_DEBUG_VERBOSE, "TrackMonsters called %d times\n", call_count);
 }
 
 // EXTERNAL DATA DECLARATIONS ----------------------------------------------
