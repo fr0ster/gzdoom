@@ -25,6 +25,8 @@ struct AIConfig
     bool use_mcp = true;            // чи використовувати MCP для передачі даних
     int mcp_port = 12345;           // порт для MCP сервера
     FString mcp_address = "localhost"; // адреса MCP сервера
+    bool log_to_file = false;        // Чи записувати логи у файл
+    FString log_file_path = "";      // Шлях до файлу логів
     
     // Рівень логування
     AIDebugLevel debug_level = AI_DEBUG_INFO; // За замовчуванням - загальна інформація

@@ -2823,6 +2823,7 @@ OptionString "LanguageOptions"
 	"ru", "Русский (Russian)"
 	"sr", "Српски (Serbian)"
 	"tr", "Türkçe (Turkish)"
+	"uk", "Українська (Ukrainian)"
 }
 
 /*=======================================

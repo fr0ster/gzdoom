@@ -6,6 +6,7 @@
 /wadsrc_wad
 *.user
 /build
+/build_logs
 /release_gcc
 /DOOMSTATS.TXT
 /src/gitinfo.h

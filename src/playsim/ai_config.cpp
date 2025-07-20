@@ -1,8 +1,92 @@
 #include "ai_config.h"
 #include "d_player.h"
+#include "common/filesystem/include/fs_files.h"
+#include "m_misc.h"
+#include "cmdlib.h"
 
 // Глобальна конфігурація AI
 AIConfig g_ai_config;
+
+// Статична змінна для файлу логу
+static FileWriter* g_ai_log_file = nullptr;
+
+// Функція для отримання шляху до файлу логу
+FString GetAILogFilePath()
+{
+    // Якщо шлях вже вказаний в конфігурації, використовуємо його
+    if (!g_ai_config.log_file_path.IsEmpty())
+        return g_ai_config.log_file_path;
+    
+    // Інакше використовуємо стандартний шлях до логів
+    FString log_dir;
+#ifdef _WIN32
+    log_dir = M_GetAppDataPath(true);
+    log_dir += "/GZDoom/logs/";
+#else
+    log_dir = "$HOME/.config/gzdoom/logs/";
+    log_dir = ExpandEnvVars(log_dir.GetChars());
+#endif
+    
+    // Створюємо директорію, якщо вона не існує
+    CreatePath(log_dir.GetChars());
+    
+    // Формуємо ім'я файлу з датою та часом
+    time_t now = time(nullptr);
+    struct tm* timeinfo = localtime(&now);
+    char timestamp[32];
+    strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", timeinfo);
+    
+    FString log_file = log_dir + "ai_vision_" + timestamp + ".log";
+    return log_file;
+}
+
+// Функція для відкриття файлу логу
+bool OpenAILogFile()
+{
+    if (g_ai_log_file != nullptr)
+        return true; // Файл вже відкритий
+    
+    if (!g_ai_config.log_to_file)
+        return false; // Логування у файл вимкнено
+    
+    FString log_path = GetAILogFilePath();
+    g_ai_log_file = FileWriter::Open(log_path.GetChars());
+    
+    if (g_ai_log_file != nullptr)
+    {
+        // Записуємо заголовок логу
+        time_t now = time(nullptr);
+        struct tm* timeinfo = localtime(&now);
+        char timestamp[32];
+        strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", timeinfo);
+        
+        g_ai_log_file->Printf("=== GZDoom AI Vision Log ===\n");
+        g_ai_log_file->Printf("Started: %s\n\n", timestamp);
+        return true;
+    }
+    
+    return false;
+}
+
+// Функція для закриття файлу логу
+void CloseAILogFile()
+{
+    if (g_ai_log_file != nullptr)
+    {
+        // Записуємо завершення логу
+        time_t now = time(nullptr);
+        struct tm* timeinfo = localtime(&now);
+        char timestamp[32];
+        strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", timeinfo);
+        
+        g_ai_log_file->Printf("\n=== Log Closed ===\n");
+        g_ai_log_file->Printf("Ended: %s\n", timestamp);
+        
+        g_ai_log_file->Close();
+        delete g_ai_log_file;
+        g_ai_log_file = nullptr;
+    }
+}
 
 // Функція логування з рівнем деталізації
 void AI_Log(AIDebugLevel level, const char* format, ...)
@@ -48,7 +132,34 @@ void AI_Log(AIDebugLevel level, const char* format, ...)
     // Використовуємо va_list для передачі аргументів
     va_list args;
     va_start(args, format);
+    
+    // Виводимо в консоль
     VPrintf(print_level, full_message.GetChars(), args);
+    
+    // Якщо увімкнено логування у файл, записуємо туди також
+    if (g_ai_config.log_to_file && g_ai_log_file != nullptr)
+    {
+        // Отримуємо поточний час для логу
+        time_t now = time(nullptr);
+        struct tm* timeinfo = localtime(&now);
+        char timestamp[32];
+        strftime(timestamp, sizeof(timestamp), "%H:%M:%S", timeinfo);
+        
+        // Записуємо у файл з часовою міткою
+        g_ai_log_file->Printf("[%s] ", timestamp);
+        
+        // Використовуємо va_list знову, оскільки vprintf споживає його
+        va_list args_copy;
+        va_copy(args_copy, args);
+        
+        // Форматуємо повідомлення для запису у файл
+        char formatted[1024];
+        mysnprintf(formatted, countof(formatted), full_message.GetChars(), args_copy);
+        g_ai_log_file->Printf("%s", formatted);
+        
+        va_end(args_copy);
+    }
+    
     va_end(args);
 }
 
@@ -64,6 +175,24 @@ void AI_Init()
     g_ai_config.debug_level = AI_DEBUG_INFO; // За замовчуванням виводимо інформаційні повідомлення
     g_ai_config.log_frequency = 100; // Виводити логи кожні 100 викликів
     
+    // Вмикаємо логування у файл за замовчуванням
+    g_ai_config.log_to_file = true;
+    
+    // Відкриваємо файл логу
+    if (g_ai_config.log_to_file)
+    {
+        if (OpenAILogFile())
+        {
+            FString log_path = GetAILogFilePath();
+            Printf(PRINT_HIGH, "AI Vision logs will be written to: %s\n", log_path.GetChars());
+        }
+        else
+        {
+            Printf(PRINT_HIGH, "Failed to open AI Vision log file!\n");
+            g_ai_config.log_to_file = false;
+        }
+    }
+    
     // Виводимо інформацію про конфігурацію
     AI_Log(AI_DEBUG_INFO, "=== Initializing AI system... ===\n");
     AI_Log(AI_DEBUG_INFO, "AI Configuration:\n");
@@ -74,6 +203,9 @@ void AI_Init()
     AI_Log(AI_DEBUG_INFO, "  - Update interval: %.2f seconds\n", g_ai_config.update_interval);
     AI_Log(AI_DEBUG_INFO, "  - Max monsters: %d\n", g_ai_config.max_monsters);
     AI_Log(AI_DEBUG_INFO, "  - Max distance: %d\n", g_ai_config.max_distance);
+    AI_Log(AI_DEBUG_INFO, "  - Log to file: %s\n", g_ai_config.log_to_file ? "Yes" : "No");
+    if (g_ai_config.log_to_file)
+        AI_Log(AI_DEBUG_INFO, "  - Log file: %s\n", GetAILogFilePath().GetChars());
     
     AI_Log(AI_DEBUG_INFO, "=== AI system initialized successfully ===\n");
 }
