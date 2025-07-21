@@ -93,7 +93,9 @@
 #include "autosegs.h"
 #include "fragglescript/t_fs.h"
 #include "g_levellocals.h"
+#include "actorinlines.h"
 #include "events.h"
+#include "playsim/p_doorinfo.h"
 #include "vm.h"
 #include "types.h"
 #include "i_system.h"
@@ -528,13 +530,37 @@ void UpdateVisibleObjects(player_t* player)
                 [](const VisibleActor& a, const VisibleActor& b) { return a.distance < b.distance; });
         }
         
+        // Використовуємо нову функцію для виявлення статичних дверей
+        TArray<DoorInfo> staticDoors = GetVisibleDoors(player);
+        size_t staticDoorsCount = staticDoors.Size();
+        size_t passableDoorsCount = 0;
+        
+        // Підраховуємо кількість прохідних дверей
+        for (unsigned int i = 0; i < staticDoors.Size(); i++)
+        {
+            if (staticDoors[i].isPassable)
+            {
+                passableDoorsCount++;
+            }
+        }
+        
+        // Додаємо статичні двері до загальної кількості
+        visibleDoorsCount += staticDoorsCount;
+        
         // Логуємо загальну інформацію про видимі об'єкти
-        AI_Log(AI_DEBUG_INFO, "Visible objects: total=%zu, monsters=%zu, items=%zu, doors=%zu\n", 
-               visibleActorsCount, visibleMonstersCount, visibleItemsCount, visibleDoorsCount);
+        AI_Log(AI_DEBUG_INFO, "Visible objects: total=%zu, monsters=%zu, items=%zu, doors=%zu (static=%zu, passable=%zu)\n", 
+               visibleActorsCount + staticDoorsCount, visibleMonstersCount, visibleItemsCount, 
+               visibleDoorsCount, staticDoorsCount, passableDoorsCount);
                
         // Оновлюємо глобальну змінну для відображення на екрані
-        g_visibleObjectsInfo.Format("Player sees: %zu monsters, %zu items, %zu doors", 
-                                  visibleMonstersCount, visibleItemsCount, visibleDoorsCount);
+        g_visibleObjectsInfo.Format("Player sees: %zu monsters, %zu items, %zu doors (passable: %zu)", 
+                                  visibleMonstersCount, visibleItemsCount, visibleDoorsCount, passableDoorsCount);
+                                  
+        // Логуємо детальну інформацію про двері, якщо потрібно
+        if (g_ai_config.debug_level >= AI_DEBUG_INFO)
+        {
+            LogDoorInfo(player);
+        }
         
         // Логуємо детальну інформацію лише за високого рівня деталізації
         // і лише кожен 10-й виклик функції для зменшення навантаження

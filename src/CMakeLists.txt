@@ -887,6 +887,7 @@ set (PCH_SOURCES
 	playsim/p_sight.cpp
 	playsim/p_sightinfo.cpp
 	playsim/ai_config.cpp
+	playsim/p_doorinfo.cpp
 	playsim/p_switch.cpp
 	playsim/p_tags.cpp
 	playsim/p_teleport.cpp
