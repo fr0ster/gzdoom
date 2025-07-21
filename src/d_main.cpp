@@ -200,6 +200,9 @@ void AI_Shutdown()
 // Функція для отримання інформації про об'єкт в прицілі гравця
 void UpdateCrosshairObjectInfo(player_t* player)
 {
+    // Функція відключена, щоб не з'являвся жовтий текст
+    // Залишаємо тільки логування для діагностики
+    
     static int call_count = 0;
     call_count++;
     
@@ -252,12 +255,6 @@ void UpdateCrosshairObjectInfo(player_t* player)
             }
         }
         
-        // Формуємо інформацію про об'єкт (більш компактний формат)
-        g_crosshairObjectInfo.Format("Crosshair: %s (%s) at %.1f", 
-            target->GetClass()->TypeName.GetChars(),
-            objectType,
-            distance);
-            
         // Логуємо детальну інформацію про об'єкт (включаючи прапорці)
         AI_Log(AI_DEBUG_INFO, "Crosshair object: %s (%s) at %.1f units, flags: %08X\n", 
             target->GetClass()->TypeName.GetChars(),
@@ -268,9 +265,11 @@ void UpdateCrosshairObjectInfo(player_t* player)
     else
     {
         // Нічого не знайдено в прицілі
-        g_crosshairObjectInfo = "Crosshair: nothing";
         AI_Log(AI_DEBUG_INFO, "Crosshair object: nothing\n");
     }
+    
+    // Очищуємо змінну, щоб вона не відображалася
+    g_crosshairObjectInfo = "";
 }
 
 void UpdateVisibleObjects(player_t* player) 
@@ -1388,8 +1387,8 @@ static void DrawRateStuff()
 			DTA_KeepRatio, true, TAG_DONE);
 	}
 	
-	// Виведення AI інформації на екран (тільки що бачить гравець та об'єкт в прицілі)
-	if (!g_visibleObjectsInfo.IsEmpty() || !g_crosshairObjectInfo.IsEmpty())
+	// Виведення AI інформації на екран (тільки що бачить гравець та монстри, які бачать гравця)
+	if (!g_visibleObjectsInfo.IsEmpty() || !g_monstersSeesPlayerInfo.IsEmpty())
 	{
 		int textScale = active_con_scale(twod);
 		int y_offset = 20; // Відступ від верху екрану

@@ -133,8 +133,8 @@ void AI_Log(AIDebugLevel level, const char* format, ...)
     va_list args;
     va_start(args, format);
     
-    // Виводимо в консоль
-    VPrintf(print_level, full_message.GetChars(), args);
+    // Вимикаємо вивід в консоль, щоб не було жовтого тексту на екрані
+    // VPrintf(print_level, full_message.GetChars(), args);
     
     // Якщо увімкнено логування у файл, перевіряємо, чи файл відкритий
     if (g_ai_config.log_to_file)
