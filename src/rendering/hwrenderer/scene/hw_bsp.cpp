@@ -45,6 +45,8 @@
 #include "hw_walldispatcher.h"
 
 #include "p_visualthinker.h"
+#include "ai_config.h"
+#include "p_sightinfo.h"
 
 #ifdef ARCH_IA32
 #include <immintrin.h>
@@ -63,6 +65,52 @@ bool inited = false;
 const int MAXDITHERACTORS = 20; // Maximum number of enemies that can set dither-transparency flags
 AActor* RenderedTargets[MAXDITHERACTORS];
 int RTnum;
+
+// Функція для логування видимих об'єктів після трасування
+void LogRenderedTargets(player_t* player)
+{
+    if (!player || !player->mo || !g_ai_config.debug_info)
+        return;
+    
+    // Підрахунок видимих об'єктів за типами
+    int visibleMonsters = 0;
+    int visibleDoors = 0;
+    int visibleItems = 0;
+    
+    // Перебираємо всі видимі об'єкти
+    for (int i = 0; i < RTnum; i++)
+    {
+        AActor* thing = RenderedTargets[i];
+        if (!thing) continue;
+        
+        // Класифікуємо об'єкт
+        if ((thing->flags3 & MF3_ISMONSTER) && !(thing->flags & MF_CORPSE))
+        {
+            visibleMonsters++;
+        }
+        else if ((thing->flags & MF_SOLID) && 
+                 (thing->Height > 50) && 
+                 (thing->flags2 & MF2_PUSHWALL))
+        {
+            visibleDoors++;
+        }
+        else if (thing->flags & MF_SPECIAL)
+        {
+            visibleItems++;
+        }
+    }
+    
+    // Логування інформації про видимі об'єкти
+    AI_Log(AI_DEBUG_VERBOSE, "[AI Vision] After ray tracing: Visible monsters: %d, doors: %d, items: %d", 
+           visibleMonsters, visibleDoors, visibleItems);
+    
+    // Вивід на екран
+    if (g_ai_config.debug_info)
+    {
+        Printf(PRINT_HIGH, "[AI Vision] After ray tracing: Visible monsters: %d, doors: %d, items: %d\n", 
+               visibleMonsters, visibleDoors, visibleItems);
+    }
+}
 
 void ClearDitherTargets()
 {
@@ -852,6 +900,12 @@ void HWDrawInfo::DoSubsector(subsector_t * sub)
 					if (RTnum < MAXDITHERACTORS) RenderedTargets[RTnum++] = thing;
 					else break;
 				}
+			}
+			
+			// Логування видимих об'єктів після трасування
+			if (players[consoleplayer].camera)
+			{
+				LogRenderedTargets(&players[consoleplayer]);
 			}
 		}
 	}

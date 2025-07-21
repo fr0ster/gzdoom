@@ -178,7 +178,6 @@ void AI_Log(AIDebugLevel level, const char* format, ...)
     
     va_end(args);
 }
-}
 
 // Ініціалізація системи AI
 void AI_Init()
@@ -192,23 +191,8 @@ void AI_Init()
     g_ai_config.debug_level = AI_DEBUG_INFO; // За замовчуванням виводимо інформаційні повідомлення
     g_ai_config.log_frequency = 100; // Виводити логи кожні 100 викликів
     
-    // Вмикаємо логування у файл за замовчуванням
-    g_ai_config.log_to_file = true;
-    
-    // Відкриваємо файл логу
-    if (g_ai_config.log_to_file)
-    {
-        if (OpenAILogFile())
-        {
-            FString log_path = GetAILogFilePath();
-            Printf(PRINT_HIGH, "AI Vision logs will be written to: %s\n", log_path.GetChars());
-        }
-        else
-        {
-            Printf(PRINT_HIGH, "Failed to open AI Vision log file!\n");
-            g_ai_config.log_to_file = false;
-        }
-    }
+    // Вимикаємо логування у файл для діагностики
+    g_ai_config.log_to_file = false;
     
     // Виводимо інформацію про конфігурацію
     AI_Log(AI_DEBUG_INFO, "=== Initializing AI system... ===\n");
@@ -221,10 +205,9 @@ void AI_Init()
     AI_Log(AI_DEBUG_INFO, "  - Max monsters: %d\n", g_ai_config.max_monsters);
     AI_Log(AI_DEBUG_INFO, "  - Max distance: %d\n", g_ai_config.max_distance);
     AI_Log(AI_DEBUG_INFO, "  - Log to file: %s\n", g_ai_config.log_to_file ? "Yes" : "No");
-    if (g_ai_config.log_to_file)
-        AI_Log(AI_DEBUG_INFO, "  - Log file: %s\n", GetAILogFilePath().GetChars());
     
     AI_Log(AI_DEBUG_INFO, "=== AI system initialized successfully ===\n");
+    Printf(PRINT_HIGH, "AI system initialized with debug output enabled.\n");
 }
 
 // Завершення роботи системи AI вже визначено в d_main.cpp

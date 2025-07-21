@@ -186,12 +186,93 @@ bool OkForLocalization(FTextureID texnum, const char* substitute);
 
 void D_DoomLoop ();
 
+// Глобальні змінні для інформації про об'єкти
+FString g_visibleObjectsInfo;
+FString g_crosshairObjectInfo;
+FString g_monstersSeesPlayerInfo; // Інформація про монстрів, які бачать гравця
+
 // AI system function stubs
 void AI_Shutdown() 
 { 
     // Використовуємо AI_Log з ai_config.cpp для логування
     AI_Log(AI_DEBUG_INFO, "AI_Shutdown called\n"); 
 }
+// Функція для отримання інформації про об'єкт в прицілі гравця
+void UpdateCrosshairObjectInfo(player_t* player)
+{
+    static int call_count = 0;
+    call_count++;
+    
+    // Оновлюємо інформацію тільки кожні N виклики для оптимізації
+    if (call_count % 5 != 0) // Оновлюємо кожні 5 викликів
+        return;
+    
+    if (!player || !player->mo)
+        return;
+    
+    // Виконуємо промінь від гравця вперед для пошуку об'єкта в прицілі
+    FTranslatedLineTarget t;
+    // Використовуємо DAngle::fromDeg для перетворення кута в потрібний формат
+    P_AimLineAttack(player->mo, DAngle::fromDeg(player->mo->Angles.Yaw.Degrees()), 2048.0, &t, DAngle::fromDeg(0.0), ALF_CHECKNONSHOOTABLE|ALF_FORCENOSMART);
+    
+    if (t.linetarget)
+    {
+        // Отримали об'єкт в прицілі
+        AActor* target = t.linetarget;
+        double distance = (target->Pos() - player->mo->Pos()).Length();
+        
+        // Визначаємо тип об'єкта
+        const char* objectType = "Unknown";
+        if (target->flags & MF_SHOOTABLE)
+        {
+            if (target->flags3 & MF3_ISMONSTER)
+                objectType = "Monster";
+            else if (target->player)
+                objectType = "Player";
+            else
+                objectType = "Shootable";
+        }
+        else if (target->flags & MF_SPECIAL)
+            objectType = "Item";
+        // Розширена перевірка дверей за різними ознаками
+        else if (target->GetClass()->TypeName.GetChars())
+        {
+            const char* typeName = target->GetClass()->TypeName.GetChars();
+            // Перевіряємо різні варіанти назв дверей
+            if (strstr(typeName, "Door") || 
+                strstr(typeName, "door") || 
+                strstr(typeName, "Gate") || 
+                strstr(typeName, "gate") ||
+                (target->flags & MF_SOLID && target->flags & MF_SHOOTABLE))
+            {
+                objectType = "Door";
+                // Додаткова інформація для діагностики
+                AI_Log(AI_DEBUG_INFO, "Door detected: %s, flags: %08X, flags2: %08X, flags3: %08X\n", 
+                       typeName, target->flags, target->flags2, target->flags3);
+            }
+        }
+        
+        // Формуємо інформацію про об'єкт (більш компактний формат)
+        g_crosshairObjectInfo.Format("Crosshair: %s (%s) at %.1f", 
+            target->GetClass()->TypeName.GetChars(),
+            objectType,
+            distance);
+            
+        // Логуємо детальну інформацію про об'єкт (включаючи прапорці)
+        AI_Log(AI_DEBUG_INFO, "Crosshair object: %s (%s) at %.1f units, flags: %08X\n", 
+            target->GetClass()->TypeName.GetChars(),
+            objectType,
+            distance,
+            target->flags);
+    }
+    else
+    {
+        // Нічого не знайдено в прицілі
+        g_crosshairObjectInfo = "Crosshair: nothing";
+        AI_Log(AI_DEBUG_INFO, "Crosshair object: nothing\n");
+    }
+}
+
 void UpdateVisibleObjects(player_t* player) 
 {
     static int call_count = 0;
@@ -410,8 +491,12 @@ void UpdateVisibleObjects(player_t* player)
         }
         
         // Логуємо загальну інформацію про видимі об'єкти
-        AI_Log(AI_DEBUG_INFO, "Visible objects: %zu (monsters: %zu, items: %zu, doors: %zu)\n", 
+        AI_Log(AI_DEBUG_INFO, "Visible objects: total=%zu, monsters=%zu, items=%zu, doors=%zu\n", 
                visibleActorsCount, visibleMonstersCount, visibleItemsCount, visibleDoorsCount);
+               
+        // Оновлюємо глобальну змінну для відображення на екрані
+        g_visibleObjectsInfo.Format("Player sees: %zu monsters, %zu items, %zu doors", 
+                                  visibleMonstersCount, visibleItemsCount, visibleDoorsCount);
         
         // Логуємо детальну інформацію лише за високого рівня деталізації
         // і лише кожен 10-й виклик функції для зменшення навантаження
@@ -442,18 +527,193 @@ void UpdateEnvironmentInfo(player_t* player)
     static int call_count = 0;
     call_count++;
     
+    if (!player || !player->mo)
+        return;
+        
     // Використовуємо налаштування log_frequency з конфігурації
     if (g_ai_config.debug_info && call_count % g_ai_config.log_frequency == 0) 
-        AI_Log(AI_DEBUG_VERBOSE, "UpdateEnvironmentInfo called %d times\n", call_count);
+    {
+        // Отримуємо базову інформацію про навколишнє середовище
+        FString envDesc = GetEnvironmentDescription(player);
+        AI_Log(AI_DEBUG_INFO, "Environment: %s\n", envDesc.GetChars());
+        
+        // Додаткова інформація про навколишнє середовище
+        if (g_ai_config.debug_level >= AI_DEBUG_VERBOSE)
+        {
+            // Інформація про поточний сектор
+            sector_t* sector = player->mo->Sector;
+            if (sector)
+            {
+                AI_Log(AI_DEBUG_VERBOSE, "Current sector: %d, floor height: %.1f, ceiling height: %.1f\n", 
+                       sector->sectornum, 
+                       sector->GetPlaneTexZ(sector_t::floor), 
+                       sector->GetPlaneTexZ(sector_t::ceiling));
+                       
+                // Інформація про освітлення
+                AI_Log(AI_DEBUG_VERBOSE, "Light level: %d, floor light: %d, ceiling light: %d\n", 
+                       sector->lightlevel, 
+                       sector->GetFloorLight(), 
+                       sector->GetCeilingLight());
+                       
+                // Інформація про спеціальні ефекти сектора
+                if (sector->special)
+                {
+                    AI_Log(AI_DEBUG_VERBOSE, "Sector has special effect: %d\n", sector->special);
+                }
+            }
+            
+            // Інформація про сусідні сектори
+            TArray<int> adjacentSectors;
+            if (sector)
+            {
+                for (int i = 0; i < sector->ibocount; i++)
+                {
+                    line_t* line = sector->Lines[i];
+                    if (line->frontsector && line->frontsector != sector && 
+                        !adjacentSectors.Find(line->frontsector->sectornum))
+                    {
+                        adjacentSectors.Push(line->frontsector->sectornum);
+                    }
+                    if (line->backsector && line->backsector != sector && 
+                        !adjacentSectors.Find(line->backsector->sectornum))
+                    {
+                        adjacentSectors.Push(line->backsector->sectornum);
+                    }
+                }
+                
+                if (adjacentSectors.Size() > 0)
+                {
+                    FString adjSectorsStr = "Adjacent sectors: ";
+                    for (unsigned int i = 0; i < adjacentSectors.Size(); i++)
+                    {
+                        if (i > 0) adjSectorsStr += ", ";
+                        adjSectorsStr.AppendFormat("%d", adjacentSectors[i]);
+                    }
+                    AI_Log(AI_DEBUG_VERBOSE, "%s\n", adjSectorsStr.GetChars());
+                }
+            }
+            
+            // Інформація про навколишні звуки
+            // Це спрощена реалізація, яка перевіряє активні звуки в радіусі
+            const double SOUND_CHECK_RADIUS = 500.0;
+            int soundsNearby = 0;
+            
+            TThinkerIterator<AActor> soundIt(player->mo->Level);
+            AActor* sndActor;
+            
+            while ((sndActor = soundIt.Next()))
+            {
+                // Перевіряємо чи об'єкт видає звук (спрощена перевірка)
+                // Видалено перевірку MF_NOSOUND, оскільки такої константи немає
+                    
+                double dist = (sndActor->Pos() - player->mo->Pos()).Length();
+                if (dist <= SOUND_CHECK_RADIUS)
+                {
+                    soundsNearby++;
+                }
+            }
+            
+            AI_Log(AI_DEBUG_VERBOSE, "Sounds nearby (radius %.1f): %d\n", SOUND_CHECK_RADIUS, soundsNearby);
+            
+            // Інформація про стан гравця
+            AI_Log(AI_DEBUG_VERBOSE, "Player state: health=%d\n", 
+                   player->health);
+            // Тимчасово закоментовано для діагностики помилки сегментації
+            // AI_Log(AI_DEBUG_VERBOSE, "Player state: health=%d, armor=%d, ammo=%d\n", 
+            //        player->health, 
+            //        player->mo->FindInventory(NAME_BasicArmor) ? player->mo->FindInventory(NAME_BasicArmor)->IntVar(NAME_Amount) : 0,
+            //        player->ReadyWeapon ? player->ReadyWeapon->PointerVar<AActor>(NAME_Ammo1) ? player->ReadyWeapon->PointerVar<AActor>(NAME_Ammo1)->IntVar(NAME_Amount) : 0 : 0);
+        }
+    }
 }
 void TrackMonsters(player_t* player) 
 { 
     static int call_count = 0;
     call_count++;
     
-    // Використовуємо налаштування log_frequency з конфігурації
+    if (!player || !player->mo)
+        return;
+        
+    // Оптимізація: перевіряємо частоту логування та рівень деталізації
+    // Логуємо лише кожен N-й виклик функції, де N - log_frequency з конфігурації
     if (g_ai_config.debug_info && call_count % g_ai_config.log_frequency == 0) 
-        AI_Log(AI_DEBUG_VERBOSE, "TrackMonsters called %d times\n", call_count);
+    {
+        // Збір інформації про монстрів, які бачать гравця
+        size_t monstersSeesPlayerCount = 0;
+        
+        // Максимальна кількість монстрів для логування
+        const int MAX_MONSTERS_TO_TRACK = g_ai_config.max_monsters;
+        
+        // Масив для зберігання монстрів, які бачать гравця
+        struct MonsterSeeingPlayer {
+            AActor* monster;
+            double distance;
+            FString type;
+            bool isAggressive; // Чи є монстр агресивним
+        };
+        
+        TArray<MonsterSeeingPlayer> monstersSeesPlayer;
+        monstersSeesPlayer.Reserve(MAX_MONSTERS_TO_TRACK); // Попередньо резервуємо пам'ять
+        
+        // Перевіряємо всіх активних монстрів у грі
+        TThinkerIterator<AActor> it(player->mo->Level);
+        AActor* mo;
+        
+        while ((mo = it.Next()) && monstersSeesPlayerCount < MAX_MONSTERS_TO_TRACK)
+        {
+            // Перевіряємо чи це монстр і чи він живий
+            if (!(mo->flags3 & MF3_ISMONSTER) || mo->health <= 0)
+                continue;
+                
+            // Перевіряємо відстань перед перевіркою видимості для оптимізації
+            double dist = (mo->Pos() - player->mo->Pos()).Length();
+            if (dist > g_ai_config.max_distance)
+                continue;
+                
+            // Перевіряємо чи монстр бачить гравця
+            // Використовуємо P_CheckSight у зворотному напрямку: від монстра до гравця
+            if (P_CheckSight(mo, player->mo, SF_IGNOREVISIBILITY))
+            {
+                // Додаємо монстра до списку
+                MonsterSeeingPlayer msp;
+                msp.monster = mo;
+                msp.distance = dist;
+                msp.type = mo->GetClass()->TypeName.GetChars();
+                
+                // Визначаємо чи монстр агресивний до гравця
+                // Спрощена перевірка: монстр агресивний, якщо його ціль - гравець
+                msp.isAggressive = (mo->target == player->mo);
+                
+                monstersSeesPlayer.Push(msp);
+                monstersSeesPlayerCount++;
+            }
+        }
+        
+        // Сортуємо монстрів за відстанню (найближчі спочатку)
+        if (monstersSeesPlayer.Size() > 1)
+        {
+            monstersSeesPlayer.ShrinkToFit();
+            std::sort(monstersSeesPlayer.begin(), monstersSeesPlayer.end(), 
+                [](const MonsterSeeingPlayer& a, const MonsterSeeingPlayer& b) { return a.distance < b.distance; });
+        }
+        
+        // Логуємо загальну інформацію про монстрів, які бачать гравця
+        AI_Log(AI_DEBUG_INFO, "Monsters seeing player: %zu\n", monstersSeesPlayerCount);
+        
+        // Формуємо інформацію про монстрів, які бачать гравця, для відображення на екрані
+        g_monstersSeesPlayerInfo.Format("%d monsters see you", monstersSeesPlayerCount);
+        
+        // Логуємо детальну інформацію про монстрів
+        if (g_ai_config.debug_level >= AI_DEBUG_VERBOSE)
+        {
+            for (size_t i = 0; i < monstersSeesPlayer.Size(); i++)
+            {
+                MonsterSeeingPlayer& msp = monstersSeesPlayer[i];
+                AI_Log(AI_DEBUG_VERBOSE, "  [%zu] %s at distance: %.1f, aggressive: %s\n", 
+                       i, msp.type.GetChars(), msp.distance, msp.isAggressive ? "yes" : "no");
+            }
+        }
+    }
 }
 
 // EXTERNAL DATA DECLARATIONS ----------------------------------------------
@@ -1127,6 +1387,51 @@ static void DrawRateStuff()
 			DTA_VirtualHeight, screen->GetHeight() / textScale,
 			DTA_KeepRatio, true, TAG_DONE);
 	}
+	
+	// Виведення AI інформації на екран (тільки що бачить гравець та об'єкт в прицілі)
+	if (!g_visibleObjectsInfo.IsEmpty() || !g_crosshairObjectInfo.IsEmpty())
+	{
+		int textScale = active_con_scale(twod);
+		int y_offset = 20; // Відступ від верху екрану
+		
+		// Виведення інформації про видимі об'єкти (зеленим) та монстрів (червоним)
+		
+		// Виводимо інформацію про видимі об'єкти (зеленим кольором)
+		if (!g_visibleObjectsInfo.IsEmpty())
+		{
+			ClearRect(twod, 0, y_offset * textScale, 
+				NewConsoleFont->StringWidth(g_visibleObjectsInfo.GetChars()) * textScale, 
+				(y_offset + NewConsoleFont->GetHeight()) * textScale, 
+				GPalette.BlackIndex, 0);
+				
+			DrawText(twod, NewConsoleFont, CR_GREEN, 0, y_offset, 
+				g_visibleObjectsInfo.GetChars(),
+				DTA_VirtualWidth, screen->GetWidth() / textScale,
+				DTA_VirtualHeight, screen->GetHeight() / textScale,
+				DTA_KeepRatio, true, TAG_DONE);
+				
+			y_offset += NewConsoleFont->GetHeight() + 2; // Додаємо відступ для наступного рядка
+		}
+		
+		// Виводимо інформацію про монстрів, які бачать гравця (червоним кольором)
+		if (!g_monstersSeesPlayerInfo.IsEmpty())
+		{
+			ClearRect(twod, 0, y_offset * textScale, 
+				NewConsoleFont->StringWidth(g_monstersSeesPlayerInfo.GetChars()) * textScale, 
+				(y_offset + NewConsoleFont->GetHeight()) * textScale, 
+				GPalette.BlackIndex, 0);
+				
+			DrawText(twod, NewConsoleFont, CR_RED, 0, y_offset, 
+				g_monstersSeesPlayerInfo.GetChars(),
+				DTA_VirtualWidth, screen->GetWidth() / textScale,
+				DTA_VirtualHeight, screen->GetHeight() / textScale,
+				DTA_KeepRatio, true, TAG_DONE);
+				
+			y_offset += NewConsoleFont->GetHeight() + 2; // Додаємо відступ для наступного рядка
+		}
+		
+		// Жовтий текст прибрано за запитом користувача
+	}
 
 	int Height = screen->GetHeight();
 
@@ -1517,6 +1822,7 @@ void D_DoomLoop()
                     UpdateVisibleObjects(&players[i]);
                     UpdateEnvironmentInfo(&players[i]);
                     TrackMonsters(&players[i]);
+                    UpdateCrosshairObjectInfo(&players[i]); // Додаємо інформацію про об'єкт в прицілі
                 }
             } 
 			// Update display, next frame, with current state.
@@ -4032,8 +4338,8 @@ static int D_DoomMain_Internal (void)
 		iwad_man = NULL;
 		if (ret != 0) return ret;
 
-		// Ініціалізуємо AI систему
-		Printf("Initializing AI system...\n");
+		// Ініціалізуємо AI систему зі спрощеною конфігурацією
+		Printf("Initializing AI system with simplified configuration...\n");
 		AI_Init();
 		Printf("AI system initialized.\n");
 

@@ -72,7 +72,18 @@ fi
 # Встановлюємо
 echo "Встановлюємо в $INSTALL_DIR..."
 mkdir -p "$INSTALL_DIR"
-make install 2>&1 | tee "$LOG_DIR/install.log"
+
+# Перевіряємо права доступу до директорії встановлення
+if [ -w "$INSTALL_DIR" ]; then
+    # Якщо є права на запис, встановлюємо без sudo
+    make install 2>&1 | tee "$LOG_DIR/install.log"
+    INSTALL_RESULT=${PIPESTATUS[0]}
+else
+    # Якщо немає прав на запис, використовуємо sudo
+    echo "Для встановлення потрібні права адміністратора. Використовуємо sudo..."
+    sudo make install 2>&1 | tee "$LOG_DIR/install.log"
+    INSTALL_RESULT=${PIPESTATUS[0]}
+fi
 
 if [ ${PIPESTATUS[0]} -eq 0 ]; then
     echo "\nУспішно зібрано та встановлено GZDoom в $INSTALL_DIR"
