@@ -204,16 +204,28 @@ void UpdateCrosshairObjectInfo(player_t* player)
     call_count++;
     
     // Оновлюємо інформацію тільки кожні N виклики для оптимізації
-    if (call_count % 5 != 0) // Оновлюємо кожні 5 викликів
+    if (call_count % 3 != 0) // Оновлюємо частіше - кожні 3 виклики
         return;
     
     if (!player || !player->mo)
         return;
     
-    // Виконуємо промінь від гравця вперед для пошуку об'єкта в прицілі
+    // Прапорці, що вказують на можливі двері
+    const uint32_t DOOR_FLAGS = MF_SOLID;
+    
+    // Спочатку спробуємо стандартний метод
     FTranslatedLineTarget t;
-    // Використовуємо DAngle::fromDeg для перетворення кута в потрібний формат
     P_AimLineAttack(player->mo, DAngle::fromDeg(player->mo->Angles.Yaw.Degrees()), 2048.0, &t, DAngle::fromDeg(0.0), ALF_CHECKNONSHOOTABLE|ALF_FORCENOSMART);
+    
+    // Логуємо для діагностики
+    AI_Log(AI_DEBUG_INFO, "P_AimLineAttack result: %s\n", t.linetarget ? "hit" : "miss");
+    
+    // Якщо стандартний метод не знайшов нічого, спробуємо інші параметри
+    if (!t.linetarget) {
+        // Спробуємо без прапорців
+        P_AimLineAttack(player->mo, DAngle::fromDeg(player->mo->Angles.Yaw.Degrees()), 2048.0, &t, DAngle::fromDeg(0.0), 0);
+        AI_Log(AI_DEBUG_INFO, "P_AimLineAttack (no flags) result: %s\n", t.linetarget ? "hit" : "miss");
+    }
     
     if (t.linetarget)
     {
@@ -223,6 +235,15 @@ void UpdateCrosshairObjectInfo(player_t* player)
         
         // Визначаємо тип об'єкта
         const char* objectType = "Unknown";
+        bool isDoor = false;
+        
+        // Логуємо детальну інформацію про об'єкт для діагностики
+        AI_Log(AI_DEBUG_INFO, "Crosshair raw object: %s, flags: %08X, flags2: %08X, flags3: %08X\n", 
+            target->GetClass()->TypeName.GetChars(),
+            target->flags,
+            target->flags2,
+            target->flags3);
+        
         if (target->flags & MF_SHOOTABLE)
         {
             if (target->flags3 & MF3_ISMONSTER)
@@ -234,18 +255,26 @@ void UpdateCrosshairObjectInfo(player_t* player)
         }
         else if (target->flags & MF_SPECIAL)
             objectType = "Item";
+        
         // Розширена перевірка дверей за різними ознаками
-        else if (target->GetClass()->TypeName.GetChars())
+        if (target->GetClass()->TypeName.GetChars())
         {
             const char* typeName = target->GetClass()->TypeName.GetChars();
+            
             // Перевіряємо різні варіанти назв дверей
             if (strstr(typeName, "Door") || 
                 strstr(typeName, "door") || 
                 strstr(typeName, "Gate") || 
                 strstr(typeName, "gate") ||
-                (target->flags & MF_SOLID && target->flags & MF_SHOOTABLE))
+                strstr(typeName, "Exit") || 
+                strstr(typeName, "exit") ||
+                strstr(typeName, "Switch") || 
+                strstr(typeName, "switch") ||
+                (target->flags & MF_SOLID))
             {
                 objectType = "Door";
+                isDoor = true;
+                
                 // Додаткова інформація для діагностики
                 AI_Log(AI_DEBUG_INFO, "Door detected: %s, flags: %08X, flags2: %08X, flags3: %08X\n", 
                        typeName, target->flags, target->flags2, target->flags3);
@@ -253,12 +282,18 @@ void UpdateCrosshairObjectInfo(player_t* player)
         }
         
         // Заповнюємо змінну для відображення на екрані
-        g_crosshairObjectInfo = FStringf("Crosshair: %s (%s) at %.1f units", 
-            target->GetClass()->TypeName.GetChars(),
-            objectType,
-            distance);
+        if (isDoor) {
+            g_crosshairObjectInfo = FStringf("Crosshair: %s (Door) at %.1f units", 
+                target->GetClass()->TypeName.GetChars(),
+                distance);
+        } else {
+            g_crosshairObjectInfo = FStringf("Crosshair: %s (%s) at %.1f units", 
+                target->GetClass()->TypeName.GetChars(),
+                objectType,
+                distance);
+        }
             
-        // Логуємо детальну інформацію про об'єкт (включаючи прапорці)
+        // Логуємо детальну інформацію про об'єкт
         AI_Log(AI_DEBUG_INFO, "Crosshair object: %s (%s) at %.1f units, flags: %08X\n", 
             target->GetClass()->TypeName.GetChars(),
             objectType,
@@ -270,6 +305,9 @@ void UpdateCrosshairObjectInfo(player_t* player)
         // Нічого не знайдено в прицілі
         g_crosshairObjectInfo = "Crosshair: nothing in front of you";
         AI_Log(AI_DEBUG_INFO, "Crosshair object: nothing\n");
+        
+        // Логуємо напрямок променя для діагностики
+        AI_Log(AI_DEBUG_INFO, "Player direction: yaw: %.2f\n", player->mo->Angles.Yaw.Degrees());
     }
 }
 
