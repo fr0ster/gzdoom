@@ -248,49 +248,141 @@ TArray<DoorInfo> GetVisibleDoors(player_t* player)
     return visibleDoors;
 }
 
+// Функція для визначення дверей перед гравцем
+DoorInfo* GetDoorInFront(player_t* player, double maxDistance)
+{
+    if (!player || !player->mo) return nullptr;
+    
+    // Отримуємо позицію і напрямок гравця
+    DVector3 playerPos = player->mo->Pos();
+    DAngle playerAngle = player->mo->Angles.Yaw;
+    
+    // Вектор напрямку погляду
+    DVector2 lookDir = playerAngle.ToVector();
+    
+    // Отримуємо список видимих дверей
+    TArray<DoorInfo> visibleDoors = GetVisibleDoors(player);
+    
+    // Статичний об'єкт для зберігання результату
+    static DoorInfo doorResult;
+    DoorInfo* bestDoor = nullptr;
+    double bestScore = -1.0;
+    
+    // Перевіряємо кожні двері
+    for (unsigned int i = 0; i < visibleDoors.Size(); i++)
+    {
+        const DoorInfo& door = visibleDoors[i];
+        
+        // Пропускаємо двері, які занадто далеко
+        if (door.distance > maxDistance) continue;
+        
+        // Обчислюємо центр дверей
+        DVector2 doorCenter = (door.line->v1->fPos() + door.line->v2->fPos()) * 0.5;
+        
+        // Напрямок від гравця до дверей
+        DVector2 toDoor = doorCenter - DVector2(playerPos.X, playerPos.Y);
+        toDoor.MakeUnit();
+        
+        // Обчислюємо кут між напрямком погляду і напрямком до дверей
+        double dotProduct = lookDir | toDoor; // скалярний добуток
+        
+        // Оцінка базується на відстані та куті
+        // Двері перед гравцем мають високий добуток (> 0.7) і малу відстань
+        double score = dotProduct - (door.distance / maxDistance * 0.3);
+        
+        // Якщо двері не перед гравцем, ігноруємо їх
+        if (dotProduct < 0.7) continue;
+        
+        // Знаходимо найкращі двері перед гравцем
+        if (score > bestScore)
+        {
+            bestScore = score;
+            doorResult = door;
+            bestDoor = &doorResult;
+        }
+    }
+    
+    return bestDoor;
+}
+
 // Функція для логування інформації про двері
 void LogDoorInfo(player_t* player)
 {
     if (!player) return;
     
     // Отримуємо список видимих дверей
-    TArray<DoorInfo> doors = GetVisibleDoors(player);
+    TArray<DoorInfo> visibleDoors = GetVisibleDoors(player);
     
-    // Формуємо рядок з інформацією про двері
-    FString doorInfo = "";
-    doorInfo.AppendFormat("Visible doors: %d | ", doors.Size());
+    // Логуємо загальну кількість видимих дверей
+    AI_Log(AI_DEBUG_INFO, "Visible doors: %d", visibleDoors.Size());
     
-    // Додаємо інформацію про кожні двері
-    for (unsigned int i = 0; i < doors.Size(); i++)
+    // Перевіряємо двері перед гравцем
+    DoorInfo* frontDoor = GetDoorInFront(player, 1024.0);
+    if (frontDoor)
     {
-        const DoorInfo& door = doors[i];
+        const char* statusStr = "Unknown";
         
-        // Визначаємо статус дверей як текст
-        const char* statusText = "Unknown";
-        switch (door.status)
+        // Перетворюємо статус на рядок
+        switch (frontDoor->status)
         {
-            case DOOR_CLOSED: statusText = "Closed"; break;
-            case DOOR_OPENED: statusText = "Opened"; break;
-            case DOOR_OPENING: statusText = "Opening"; break;
-            case DOOR_CLOSING: statusText = "Closing"; break;
-            case DOOR_WAITING: statusText = "Waiting"; break;
+            case DOOR_CLOSED:
+                statusStr = "Closed";
+                break;
+            case DOOR_OPENED:
+                statusStr = "Opened";
+                break;
+            case DOOR_OPENING:
+                statusStr = "Opening";
+                break;
+            case DOOR_CLOSING:
+                statusStr = "Closing";
+                break;
+            case DOOR_WAITING:
+                statusStr = "Waiting";
+                break;
         }
         
-        // Додаємо інформацію про двері
-        doorInfo.AppendFormat("Door %d: %s, %s, Distance: %.1f | ", 
-            i + 1, 
-            statusText, 
-            door.isPassable ? "Passable" : "Blocked",
-            door.distance);
+        // Логуємо інформацію про двері перед гравцем
+        AI_Log(AI_DEBUG_INFO, "Door in front: Status=%s, Passable=%s, Distance=%.2f",
+            statusStr, frontDoor->isPassable ? "Yes" : "No", frontDoor->distance);
         
-        // Обмежуємо кількість дверей у логу
-        if (i >= 4) // Показуємо максимум 5 дверей
-        {
-            doorInfo.AppendFormat("... and %d more", doors.Size() - 5);
-            break;
-        }
+        // Обчислюємо центр дверей
+        DVector2 doorCenter = (frontDoor->line->v1->fPos() + frontDoor->line->v2->fPos()) * 0.5;
+        AI_Log(AI_DEBUG_INFO, "Door position: X=%.2f, Y=%.2f", doorCenter.X, doorCenter.Y);
+    }
+    else
+    {
+        AI_Log(AI_DEBUG_INFO, "No door in front of player");
     }
     
-    // Логуємо інформацію
-    AI_Log(AIDebugLevel::AI_DEBUG_INFO, "%s", doorInfo.GetChars());
+    // Логуємо інформацію про кожні двері
+    for (unsigned int i = 0; i < visibleDoors.Size(); i++)
+    {
+        const DoorInfo& door = visibleDoors[i];
+        const char* statusStr = "Unknown";
+        
+        // Перетворюємо статус на рядок
+        switch (door.status)
+        {
+            case DOOR_CLOSED:
+                statusStr = "Closed";
+                break;
+            case DOOR_OPENED:
+                statusStr = "Opened";
+                break;
+            case DOOR_OPENING:
+                statusStr = "Opening";
+                break;
+            case DOOR_CLOSING:
+                statusStr = "Closing";
+                break;
+            case DOOR_WAITING:
+                statusStr = "Waiting";
+                break;
+        }
+        
+        // Логуємо інформацію про двері
+        AI_Log(AI_DEBUG_INFO, "Door %d: Status=%s, Passable=%s, Distance=%.2f",
+            i, statusStr, door.isPassable ? "Yes" : "No", door.distance);
+    }
 }

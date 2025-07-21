@@ -40,5 +40,8 @@ bool IsDoorPassable(line_t* line, sector_t* sector);
 
 // Функції для роботи з thinker-ами дверей видалені, оскільки ми використовуємо лише властивості line_t та sector_t
 
+// Функція для визначення дверей перед гравцем
+DoorInfo* GetDoorInFront(player_t* player, double maxDistance = 200.0);
+
 // Функція для логування інформації про двері
 void LogDoorInfo(player_t* player);
