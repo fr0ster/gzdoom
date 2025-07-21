@@ -200,28 +200,32 @@ void UpdateVisibleObjects(player_t* player)
     if (!player || !player->mo)
         return;
 
-    // Використовуємо налаштування log_frequency з конфігурації
-    if (g_ai_config.debug_info && call_count % g_ai_config.log_frequency == 0) {
-        // Логування базової інформації про гравця
-        AI_Log(AI_DEBUG_INFO, "Player position: (%.1f, %.1f, %.1f)\n", 
-               player->mo->X(), player->mo->Y(), player->mo->Z());
-        AI_Log(AI_DEBUG_INFO, "Player view height: %.1f\n", player->viewz);
-        AI_Log(AI_DEBUG_INFO, "Player FOV: %.1f\n", player->FOV);
-        AI_Log(AI_DEBUG_INFO, "Player angles: yaw=%.1f, pitch=%.1f\n", 
-               player->mo->Angles.Yaw.Degrees(), player->mo->Angles.Pitch.Degrees());
+    // Оптимізація: перевіряємо частоту логування та рівень деталізації
+    // Логуємо лише кожен N-й виклик функції, де N - log_frequency з конфігурації
+    if (g_ai_config.debug_info && call_count % g_ai_config.log_frequency == 0) 
+    {
+        // Логування базової інформації про гравця (лише для рівня INFO і вище)
+        if (g_ai_config.debug_level >= AI_DEBUG_INFO)
+        {
+            AI_Log(AI_DEBUG_INFO, "Player position: (%.1f, %.1f, %.1f)\n", 
+                   player->mo->X(), player->mo->Y(), player->mo->Z());
+            AI_Log(AI_DEBUG_INFO, "Player FOV: %.1f, angles: yaw=%.1f, pitch=%.1f\n", 
+                   player->FOV, player->mo->Angles.Yaw.Degrees(), player->mo->Angles.Pitch.Degrees());
 
-        // Отримання опису навколишнього середовища
-        FString envDesc = GetEnvironmentDescription(player);
-        AI_Log(AI_DEBUG_INFO, "Environment: %s\n", envDesc.GetChars());
+            // Отримання опису навколишнього середовища
+            FString envDesc = GetEnvironmentDescription(player);
+            AI_Log(AI_DEBUG_INFO, "Environment: %s\n", envDesc.GetChars());
+        }
 
-        // Збір інформації про видимі об'єкти
-        int visibleActorsCount = 0;
-        int visibleMonstersCount = 0;
-        int visibleItemsCount = 0;
-        int visibleDoorsCount = 0;
+        // Збір інформації про видимі об'єкти - оптимізовано
+        // Використовуємо локальні змінні з чіткою ініціалізацією
+        size_t visibleActorsCount = 0;
+        size_t visibleMonstersCount = 0;
+        size_t visibleItemsCount = 0;
+        size_t visibleDoorsCount = 0;
         
         // Максимальна кількість видимих об'єктів для логування
-        const int MAX_VISIBLE_ACTORS = 50;
+        const int MAX_VISIBLE_ACTORS = 30; // Зменшено для оптимізації
         
         // Масив для зберігання видимих об'єктів
         struct VisibleActor {
@@ -231,6 +235,7 @@ void UpdateVisibleObjects(player_t* player)
         };
         
         TArray<VisibleActor> visibleActors;
+        visibleActors.Reserve(MAX_VISIBLE_ACTORS); // Попередньо резервуємо пам'ять
         
         // Обмежуємо пошук лише поточним сектором та безпосередньо сусідніми для оптимізації
         sector_t* currentSector = player->mo->Sector;
@@ -246,161 +251,158 @@ void UpdateVisibleObjects(player_t* player)
                 double dist = (thing->Pos() - player->mo->Pos()).Length();
                 if (dist > g_ai_config.max_distance) continue;
                 
-                // Перевіряємо видимість об'єкта (спрощена перевірка для швидкодії)
+                // Оптимізована перевірка видимості та поля зору
                 if (P_CheckSight(player->mo, thing, SF_IGNOREVISIBILITY))
                 {
-                    // Додатково перевіряємо, чи знаходиться об'єкт у полі зору гравця
-                    // Отримуємо вектор напрямку від гравця до об'єкта
+                    // Оптимізована перевірка поля зору
                     DVector3 dirToThing = thing->Pos() - player->mo->Pos();
                     dirToThing.Z = 0; // Ігноруємо вертикальну складову для перевірки кута
                     dirToThing.MakeUnit();
                     
-                    // Отримуємо вектор погляду гравця
                     DAngle playerYaw = player->mo->Angles.Yaw;
                     DVector3 playerDir(playerYaw.Cos(), playerYaw.Sin(), 0);
                     
-                    // Обчислюємо кут між напрямком погляду гравця та напрямком до об'єкта
                     double dotProduct = playerDir.X * dirToThing.X + playerDir.Y * dirToThing.Y;
-                    double angleInRadians = acos(dotProduct);
-                    double angleInDegrees = angleInRadians * (180.0 / M_PI);
+                    // Оптимізація: уникаємо використання acos для кожного об'єкта
+                    // Замість цього порівнюємо косинус кута безпосередньо
+                    double cosHalfFOV = cos((player->FOV / 2) * M_PI / 180.0);
                     
-                    // Перевіряємо, чи знаходиться об'єкт в межах половини кута огляду гравця
-                    // Використовуємо половину FOV гравця як межу
-                    if (angleInDegrees <= player->FOV / 2)
-                {
-                    // Додаємо об'єкт до списку видимих
-                    VisibleActor va;
-                    va.actor = thing;
-                    va.distance = dist;
-                    
-                    // Визначаємо тип об'єкта (виправлена логіка)
-                    if (thing->flags3 & MF3_ISMONSTER)
+                    // Якщо косинус кута між векторами більший за косинус половини FOV,
+                    // то кут менший за половину FOV (косинус спадає зі зростанням кута)
+                    if (dotProduct >= cosHalfFOV)
                     {
-                        va.type = "Monster";
-                        visibleMonstersCount++;
-                    }
-                    else if (thing->flags & MF_SPECIAL)
-                    {
-                        va.type = "Item";
-                        visibleItemsCount++;
-                    }
-                    // Використовуємо комбінацію перевірок для виявлення дверей
-                    else if ((thing->flags & MF_SOLID) && // Двері зазвичай тверді
-                             (thing->flags & MF_SHOOTABLE || thing->flags2 & MF2_PUSHWALL) && // Можна стріляти або штовхати стіни
-                             (thing->Height > 50) && // Достатньо високі
-                             (thing->GetClass()->TypeName.GetChars() && 
-                              (strstr(thing->GetClass()->TypeName.GetChars(), "Door") != nullptr ||
-                               strstr(thing->GetClass()->TypeName.GetChars(), "door") != nullptr ||
-                               strstr(thing->GetClass()->TypeName.GetChars(), "Gate") != nullptr ||
-                               strstr(thing->GetClass()->TypeName.GetChars(), "gate") != nullptr)))
-                    {
-                        va.type = "Door";
-                        visibleDoorsCount++;
-                    }
-                    else
-                    {
-                        // Для інших об'єктів просто використовуємо ім'я класу
-                        va.type = thing->GetClass()->TypeName.GetChars();
-                    }
-                    
-                    visibleActors.Push(va);
-                    visibleActorsCount++;
-                }
-                    
-                    // Обмежуємо кількість об'єктів для логування
-                    if (visibleActorsCount >= MAX_VISIBLE_ACTORS)
-                        break;
-                }
-            }
-            
-            // Обмежуємо кількість сусідніх секторів для перевірки
-            int checkedSectors = 0;
-            const int MAX_SECTORS_TO_CHECK = 5;
-            
-            // Перевіряємо лише кілька найближчих сусідніх секторів
-            for (int i = 0; i < currentSector->Lines.Size() && checkedSectors < MAX_SECTORS_TO_CHECK; i++)
-            {
-                line_t* line = currentSector->Lines[i];
-                if (!line) continue;
-                
-                sector_t* otherSector = (line->frontsector == currentSector) ? line->backsector : line->frontsector;
-                if (!otherSector || otherSector == currentSector) continue;
-                
-                checkedSectors++;
-                
-                // Перевіряємо об'єкти в сусідньому секторі
-                for (auto p = otherSector->touching_renderthings; p != nullptr && visibleActorsCount < MAX_VISIBLE_ACTORS; p = p->m_snext)
-                {
-                    AActor* thing = p->m_thing;
-                    if (!thing || thing == player->mo) continue;
-                    
-                    // Перевіряємо відстань
-                    double dist = (thing->Pos() - player->mo->Pos()).Length();
-                    if (dist > g_ai_config.max_distance) continue;
-                    
-                    // Спрощена перевірка видимості
-                    if (P_CheckSight(player->mo, thing, SF_IGNOREVISIBILITY))
-                    {
-                        // Додатково перевіряємо, чи знаходиться об'єкт у полі зору гравця
-                        // Отримуємо вектор напрямку від гравця до об'єкта
-                        DVector3 dirToThing = thing->Pos() - player->mo->Pos();
-                        dirToThing.Z = 0; // Ігноруємо вертикальну складову для перевірки кута
-                        dirToThing.MakeUnit();
+                        // Додаємо об'єкт до списку видимих
+                        VisibleActor va;
+                        va.actor = thing;
+                        va.distance = dist;
                         
-                        // Отримуємо вектор погляду гравця
-                        DAngle playerYaw = player->mo->Angles.Yaw;
-                        DVector3 playerDir(playerYaw.Cos(), playerYaw.Sin(), 0);
-                        
-                        // Обчислюємо кут між напрямком погляду гравця та напрямком до об'єкта
-                        double dotProduct = playerDir.X * dirToThing.X + playerDir.Y * dirToThing.Y;
-                        double angleInRadians = acos(dotProduct);
-                        double angleInDegrees = angleInRadians * (180.0 / M_PI);
-                        
-                        // Перевіряємо, чи знаходиться об'єкт в межах половини кута огляду гравця
-                        if (angleInDegrees <= player->FOV / 2)
+                        // Оптимізована класифікація об'єктів
+                        if (thing->flags3 & MF3_ISMONSTER)
                         {
-                            VisibleActor va;
-                            va.actor = thing;
-                            va.distance = dist;
-                            
-                            if (thing->flags3 & MF3_ISMONSTER)
+                            // Рахуємо лише живих монстрів
+                            if (thing->health > 0)
                             {
                                 va.type = "Monster";
                                 visibleMonstersCount++;
                             }
-                            else if (thing->flags & MF_SPECIAL)
-                            {
-                                va.type = "Item";
-                                visibleItemsCount++;
-                            }
-                            // Використовуємо комбінацію перевірок для виявлення дверей
-                            else if ((thing->flags & MF_SOLID) && // Двері зазвичай тверді
-                                     (thing->flags & MF_SHOOTABLE || thing->flags2 & MF2_PUSHWALL) && // Можна стріляти або штовхати стіни
-                                     (thing->Height > 50) && // Достатньо високі
-                                     (thing->GetClass()->TypeName.GetChars() && 
-                                      (strstr(thing->GetClass()->TypeName.GetChars(), "Door") != nullptr ||
-                                       strstr(thing->GetClass()->TypeName.GetChars(), "door") != nullptr ||
-                                       strstr(thing->GetClass()->TypeName.GetChars(), "Gate") != nullptr ||
-                                       strstr(thing->GetClass()->TypeName.GetChars(), "gate") != nullptr)))
-                            {
-                                va.type = "Door";
-                                visibleDoorsCount++;
-                            }
-                            else
-                            {
-                                va.type = thing->GetClass()->TypeName.GetChars();
-                            }
+                            else continue; // Пропускаємо мертвих монстрів
+                        }
+                        else if (thing->flags & MF_SPECIAL)
+                        {
+                            va.type = "Item";
+                            visibleItemsCount++;
+                        }
+                        // Спрощена перевірка дверей
+                        else if ((thing->flags & MF_SOLID) && 
+                                 (thing->flags2 & MF2_PUSHWALL) && 
+                                 (thing->Height > 50))
+                        {
+                            va.type = "Door";
+                            visibleDoorsCount++;
+                        }
+                        else
+                        {
+                            // Для інших об'єктів не зберігаємо тип, щоб зменшити навантаження
+                            continue;
+                        }
+                        
+                        visibleActors.Push(va);
+                        visibleActorsCount++;
+                        
+                        // Обмежуємо кількість об'єктів для логування
+                        if (visibleActorsCount >= MAX_VISIBLE_ACTORS)
+                            break;
+                    }
+                }
+            }
+            
+            // Оптимізація: перевіряємо сусідні сектори лише якщо не досягли ліміту об'єктів
+            if (visibleActorsCount < MAX_VISIBLE_ACTORS)
+            {
+                // Обмежуємо кількість сусідніх секторів для перевірки
+                int checkedSectors = 0;
+                const int MAX_SECTORS_TO_CHECK = 3; // Зменшено для оптимізації
+                
+                // Перевіряємо лише кілька найближчих сусідніх секторів
+                for (int i = 0; i < currentSector->Lines.Size() && checkedSectors < MAX_SECTORS_TO_CHECK; i++)
+                {
+                    line_t* line = currentSector->Lines[i];
+                    if (!line) continue;
+                    
+                    sector_t* otherSector = (line->frontsector == currentSector) ? line->backsector : line->frontsector;
+                    if (!otherSector || otherSector == currentSector) continue;
+                    
+                    checkedSectors++;
+                    
+                    // Перевіряємо об'єкти в сусідньому секторі
+                    for (auto p = otherSector->touching_renderthings; p != nullptr && visibleActorsCount < MAX_VISIBLE_ACTORS; p = p->m_snext)
+                    {
+                        AActor* thing = p->m_thing;
+                        if (!thing || thing == player->mo) continue;
+                        
+                        // Перевіряємо відстань
+                        double dist = (thing->Pos() - player->mo->Pos()).Length();
+                        if (dist > g_ai_config.max_distance) continue;
+                        
+                        // Спрощена перевірка видимості
+                        if (P_CheckSight(player->mo, thing, SF_IGNOREVISIBILITY))
+                        {
+                            // Оптимізована перевірка поля зору
+                            DVector3 dirToThing = thing->Pos() - player->mo->Pos();
+                            dirToThing.Z = 0;
+                            dirToThing.MakeUnit();
                             
-                            visibleActors.Push(va);
-                            visibleActorsCount++;
+                            DAngle playerYaw = player->mo->Angles.Yaw;
+                            DVector3 playerDir(playerYaw.Cos(), playerYaw.Sin(), 0);
+                            
+                            double dotProduct = playerDir.X * dirToThing.X + playerDir.Y * dirToThing.Y;
+                            double cosHalfFOV = cos((player->FOV / 2) * M_PI / 180.0);
+                            
+                            if (dotProduct >= cosHalfFOV)
+                            {
+                                VisibleActor va;
+                                va.actor = thing;
+                                va.distance = dist;
+                                
+                                // Спрощена класифікація об'єктів
+                                if (thing->flags3 & MF3_ISMONSTER)
+                                {
+                                    if (thing->health > 0) // Лише живі монстри
+                                    {
+                                        va.type = "Monster";
+                                        visibleMonstersCount++;
+                                    }
+                                    else continue; // Пропускаємо мертвих монстрів
+                                }
+                                else if (thing->flags & MF_SPECIAL)
+                                {
+                                    va.type = "Item";
+                                    visibleItemsCount++;
+                                }
+                                else if ((thing->flags & MF_SOLID) && 
+                                         (thing->flags2 & MF2_PUSHWALL) && 
+                                         (thing->Height > 50))
+                                {
+                                    va.type = "Door";
+                                    visibleDoorsCount++;
+                                }
+                                else
+                                {
+                                    // Пропускаємо інші об'єкти
+                                    continue;
+                                }
+                                
+                                visibleActors.Push(va);
+                                visibleActorsCount++;
+                            }
                         }
                     }
                 }
             }
         }
         
-        // Сортуємо об'єкти за відстанню (використовуємо вбудований метод сортування для швидкодії)
-        if (visibleActors.Size() > 1)
+        // Оптимізація: сортуємо лише якщо потрібно виводити детальну інформацію
+        if (g_ai_config.debug_level >= AI_DEBUG_VERBOSE && visibleActors.Size() > 1)
         {
             visibleActors.ShrinkToFit();
             std::sort(visibleActors.begin(), visibleActors.end(), 
@@ -408,42 +410,31 @@ void UpdateVisibleObjects(player_t* player)
         }
         
         // Логуємо загальну інформацію про видимі об'єкти
-        // Переконуємося, що значення не від'ємні
-        int safeMonsterCount = visibleMonstersCount >= 0 ? visibleMonstersCount : 0;
-        int safeItemCount = visibleItemsCount >= 0 ? visibleItemsCount : 0;
-        int safeDoorCount = visibleDoorsCount >= 0 ? visibleDoorsCount : 0;
+        AI_Log(AI_DEBUG_INFO, "Visible objects: %zu (monsters: %zu, items: %zu, doors: %zu)\n", 
+               visibleActorsCount, visibleMonstersCount, visibleItemsCount, visibleDoorsCount);
         
-        AI_Log(AI_DEBUG_INFO, "Visible objects: %d (monsters: %d, items: %d, doors: %d)\n", 
-               visibleActorsCount, safeMonsterCount, safeItemCount, safeDoorCount);
-        
-        // Логуємо детальну інформацію лише про найближчі видимі об'єкти для оптимізації
-        // Також логуємо лише кожен 10-й кадр для зменшення навантаження
-        static int frame_counter = 0;
-        frame_counter++;
-        
-        if (g_ai_config.debug_level >= AI_DEBUG_VERBOSE && frame_counter % 10 == 0)
+        // Логуємо детальну інформацію лише за високого рівня деталізації
+        // і лише кожен 10-й виклик функції для зменшення навантаження
+        if (g_ai_config.debug_level >= AI_DEBUG_VERBOSE && call_count % 10 == 0)
         {
             // Обмежуємо кількість об'єктів для детального логування
-            const int MAX_DETAILED_OBJECTS = 5;
-            int detailedCount = std::min(MAX_DETAILED_OBJECTS, (int)visibleActors.Size());
+            const size_t MAX_DETAILED_OBJECTS = 3; // Зменшено для оптимізації
+            size_t detailedCount = std::min<size_t>(MAX_DETAILED_OBJECTS, visibleActors.Size());
             
-            for (int i = 0; i < detailedCount; i++)
+            for (size_t i = 0; i < detailedCount; i++)
             {
                 VisibleActor& va = visibleActors[i];
-                AI_Log(AI_DEBUG_VERBOSE, "  [%d] %s at (%.1f, %.1f, %.1f), distance: %.1f\n", 
-                       i, va.type.GetChars(), 
-                       va.actor->X(), va.actor->Y(), va.actor->Z(), 
-                       va.distance);
+                AI_Log(AI_DEBUG_VERBOSE, "  [%zu] %s at distance: %.1f\n", 
+                       i, va.type.GetChars(), va.distance);
             }
             
             // Якщо є більше об'єктів, показуємо загальну кількість
             if (visibleActors.Size() > MAX_DETAILED_OBJECTS)
             {
-                AI_Log(AI_DEBUG_VERBOSE, "  ... and %d more objects\n", visibleActors.Size() - MAX_DETAILED_OBJECTS);
+                AI_Log(AI_DEBUG_VERBOSE, "  ... and %zu more objects\n", 
+                       visibleActors.Size() - MAX_DETAILED_OBJECTS);
             }
         }
-        
-        AI_Log(AI_DEBUG_VERBOSE, "UpdateVisibleObjects called %d times\n", call_count);
     }
 }
 void UpdateEnvironmentInfo(player_t* player) 

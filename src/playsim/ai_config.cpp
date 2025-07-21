@@ -136,31 +136,48 @@ void AI_Log(AIDebugLevel level, const char* format, ...)
     // Виводимо в консоль
     VPrintf(print_level, full_message.GetChars(), args);
     
-    // Якщо увімкнено логування у файл, записуємо туди також
-    if (g_ai_config.log_to_file && g_ai_log_file != nullptr)
+    // Якщо увімкнено логування у файл, перевіряємо, чи файл відкритий
+    if (g_ai_config.log_to_file)
     {
-        // Отримуємо поточний час для логу
-        time_t now = time(nullptr);
-        struct tm* timeinfo = localtime(&now);
-        char timestamp[32];
-        strftime(timestamp, sizeof(timestamp), "%H:%M:%S", timeinfo);
+        // Перевіряємо, чи файл логу відкритий, якщо ні - спробуємо відкрити
+        if (g_ai_log_file == nullptr)
+        {
+            OpenAILogFile();
+        }
         
-        // Записуємо у файл з часовою міткою
-        g_ai_log_file->Printf("[%s] ", timestamp);
-        
-        // Використовуємо va_list знову, оскільки vprintf споживає його
-        va_list args_copy;
-        va_copy(args_copy, args);
-        
-        // Форматуємо повідомлення для запису у файл
-        char formatted[1024];
-        mysnprintf(formatted, countof(formatted), full_message.GetChars(), args_copy);
-        g_ai_log_file->Printf("%s", formatted);
-        
-        va_end(args_copy);
+        // Перевіряємо знову після спроби відкриття
+        if (g_ai_log_file != nullptr)
+        {
+            // Отримуємо поточний час для логу
+            time_t now = time(nullptr);
+            struct tm* timeinfo = localtime(&now);
+            char timestamp[32];
+            strftime(timestamp, sizeof(timestamp), "%H:%M:%S", timeinfo);
+            
+            // Записуємо у файл з часовою міткою
+            g_ai_log_file->Printf("[%s] ", timestamp);
+            
+            // Використовуємо va_list знову, оскільки vprintf споживає його
+            va_list args_copy;
+            va_copy(args_copy, args);
+            
+            // Форматуємо повідомлення для запису у файл за допомогою vsnprintf
+            char buffer[4096]; // Достатньо великий буфер для повідомлень
+            vsnprintf(buffer, sizeof(buffer), full_message.GetChars(), args_copy);
+            g_ai_log_file->Printf("%s", buffer);
+            
+            va_end(args_copy);
+        }
+        else
+        {
+            // Якщо не вдалося відкрити файл, вимикаємо логування у файл
+            g_ai_config.log_to_file = false;
+            Printf(PRINT_HIGH, "AI Vision: Failed to open log file, file logging disabled\n");
+        }
     }
     
     va_end(args);
+}
 }
 
 // Ініціалізація системи AI
