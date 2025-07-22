@@ -320,16 +320,16 @@ void LogDoorInfo(player_t* player)
     DoorInfo* frontDoor = GetDoorInFront(player, 1024.0);
     if (frontDoor)
     {
+        // Визначаємо статус дверей
         const char* statusStr = "Unknown";
         
-        // Перетворюємо статус на рядок
         switch (frontDoor->status)
         {
+            case DOOR_OPENED:
+                statusStr = "Open";
+                break;
             case DOOR_CLOSED:
                 statusStr = "Closed";
-                break;
-            case DOOR_OPENED:
-                statusStr = "Opened";
                 break;
             case DOOR_OPENING:
                 statusStr = "Opening";
@@ -340,15 +340,20 @@ void LogDoorInfo(player_t* player)
             case DOOR_WAITING:
                 statusStr = "Waiting";
                 break;
+            case DOOR_UNKNOWN:
+                statusStr = "Unknown";
+                break;
         }
-        
-        // Логуємо інформацію про двері перед гравцем
-        AI_Log(AI_DEBUG_INFO, "Door in front: Status=%s, Passable=%s, Distance=%.2f",
-            statusStr, frontDoor->isPassable ? "Yes" : "No", frontDoor->distance);
         
         // Обчислюємо центр дверей
         DVector2 doorCenter = (frontDoor->line->v1->fPos() + frontDoor->line->v2->fPos()) * 0.5;
-        AI_Log(AI_DEBUG_INFO, "Door position: X=%.2f, Y=%.2f", doorCenter.X, doorCenter.Y);
+        
+        // Виводимо інформацію про двері перед гравцем помаранчевим кольором
+        // ANSI escape sequence для помаранчевого кольору: \033[38;5;208m
+        // Скидання кольору: \033[0m
+        AI_Log(AI_DEBUG_INFO, "\033[38;5;208m[DOOR IN FRONT] Status=%s, Passable=%s, Distance=%.2f, Position=(%.2f, %.2f)\033[0m",
+            statusStr, frontDoor->isPassable ? "Yes" : "No", frontDoor->distance,
+            doorCenter.X, doorCenter.Y);
     }
     else
     {
