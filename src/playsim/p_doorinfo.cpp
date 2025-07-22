@@ -6,6 +6,7 @@
 #include "p_blockmap.h"
 #include "g_levellocals.h"
 #include "actorinlines.h"
+#include "p_linetracedata.h"
 
 // Функція для визначення, чи є лінія дверима
 bool IsDoor(line_t* line)
@@ -305,59 +306,155 @@ DoorInfo* GetDoorInFront(player_t* player, double maxDistance)
     return bestDoor;
 }
 
-// Функція для логування інформації про двері
+// Функція для логування інформації про двері та об'єкти перед гравцем
 void LogDoorInfo(player_t* player)
 {
-    if (!player) return;
+    if (!player || !player->mo)
+        return;
     
     // Отримуємо список видимих дверей
     TArray<DoorInfo> visibleDoors = GetVisibleDoors(player);
     
-    // Логуємо загальну кількість видимих дверей
-    AI_Log(AI_DEBUG_INFO, "Visible doors: %d", visibleDoors.Size());
-    
-    // Перевіряємо двері перед гравцем
+    // Перевіряємо що знаходиться перед гравцем
     DoorInfo* frontDoor = GetDoorInFront(player, 1024.0);
-    if (frontDoor)
+    
+    // Отримуємо позицію і напрямок гравця
+    DVector3 playerPos = player->mo->Pos();
+    DAngle playerAngle = player->mo->Angles.Yaw;
+    DVector2 lookDir = playerAngle.ToVector();
+    
+    // Виконуємо трасування променя вперед для виявлення стіни
+    FLineTraceData trace;
+    double maxDistance = 1024.0;
+    
+    // Трасування променя від гравця вперед
+    P_LineTrace(player->mo, 
+               player->mo->Angles.Yaw, // передаємо сам об'єкт DAngle без перетворень
+               maxDistance, 
+               DAngle::fromDeg(0.0), // pitch також має бути DAngle
+               TRF_ALLACTORS | TRF_NOSKY, // додаємо прапорці для виявлення всіх акторів та ігнорування неба
+               0.0, // offsetz
+               0.0, // offsetforward
+               0.0, // offsetside
+               &trace);
+    
+    // Визначаємо що перед гравцем
+    const char* objectType = "Nothing";
+    const char* statusStr = "";
+    bool isPassable = true;
+    double distance = maxDistance;
+    DVector2 position(0, 0);
+    
+    // Спочатку перевіряємо тип об'єкта, в який потрапив промінь
+    if (trace.HitType == TRACE_HitActor && trace.HitActor)
     {
-        // Визначаємо статус дверей
-        const char* statusStr = "Unknown";
+        // Якщо промінь потрапив у актора (монстра), виводимо інформацію про нього
+        const char* rawTypeName = trace.HitActor->GetClass()->TypeName.GetChars();
+        objectType = rawTypeName;
+        isPassable = false;
+        distance = trace.Distance;
+        position = DVector2(trace.HitLocation.X, trace.HitLocation.Y);
         
-        switch (frontDoor->status)
+        // Діагностичний вивід для визначення типу актора
+        Printf("DEBUG: Actor class=%s, flags3=%d, flags=%d\n", 
+               rawTypeName, 
+               trace.HitActor->flags3, 
+               trace.HitActor->flags);
+        
+        // Визначаємо тип об'єкта більш точно
+        if (trace.HitActor->flags3 & MF3_ISMONSTER)
         {
-            case DOOR_OPENED:
-                statusStr = "Open";
-                break;
-            case DOOR_CLOSED:
-                statusStr = "Closed";
-                break;
-            case DOOR_OPENING:
-                statusStr = "Opening";
-                break;
-            case DOOR_CLOSING:
-                statusStr = "Closing";
-                break;
-            case DOOR_WAITING:
-                statusStr = "Waiting";
-                break;
-            case DOOR_UNKNOWN:
-                statusStr = "Unknown";
-                break;
+            // Це монстр
+            objectType = "Monster";
+            if (trace.HitActor->health <= 0)
+            {
+                statusStr = "Dead";
+            }
+            else
+            {
+                statusStr = "Alive";
+            }
         }
-        
-        // Обчислюємо центр дверей
-        DVector2 doorCenter = (frontDoor->line->v1->fPos() + frontDoor->line->v2->fPos()) * 0.5;
-        
-        // Виводимо інформацію про двері перед гравцем помаранчевим кольором
-        // ANSI escape sequence для помаранчевого кольору: \033[38;5;208m
-        // Скидання кольору: \033[0m
-        AI_Log(AI_DEBUG_INFO, "\033[38;5;208m[DOOR IN FRONT] Status=%s, Passable=%s, Distance=%.2f, Position=(%.2f, %.2f)\033[0m",
-            statusStr, frontDoor->isPassable ? "Yes" : "No", frontDoor->distance,
-            doorCenter.X, doorCenter.Y);
+        else if (trace.HitActor->flags & MF_SPECIAL)
+        {
+            // Це предмет, який можна підібрати
+            objectType = "Pickup";
+            statusStr = rawTypeName;
+        }
+        else
+        {
+            // Декорація або інший об'єкт
+            objectType = "Decoration";
+            statusStr = rawTypeName;
+        }
+    }
+    else if (trace.HitType == TRACE_HitWall)
+    {
+        // Перевіряємо чи це двері
+        if (frontDoor)
+        {
+            objectType = "Door";
+            isPassable = frontDoor->isPassable;
+            distance = frontDoor->distance;
+            position = (frontDoor->line->v1->fPos() + frontDoor->line->v2->fPos()) * 0.5;
+            
+            // Визначаємо статус дверей
+            switch (frontDoor->status)
+            {
+                case DOOR_OPENED:
+                    statusStr = "Open";
+                    break;
+                case DOOR_CLOSED:
+                    statusStr = "Closed";
+                    break;
+                case DOOR_OPENING:
+                    statusStr = "Opening";
+                    break;
+                case DOOR_CLOSING:
+                    statusStr = "Closing";
+                    break;
+                case DOOR_WAITING:
+                    statusStr = "Waiting";
+                    break;
+                case DOOR_UNKNOWN:
+                    statusStr = "Unknown";
+                    break;
+            }
+        }
+        else
+        {
+            // Це стіна
+            objectType = "Wall";
+            isPassable = false;
+            distance = trace.Distance;
+            position = DVector2(trace.HitLocation.X, trace.HitLocation.Y);
+        }
+    }
+    else if (trace.HitType == TRACE_HitFloor || trace.HitType == TRACE_HitCeiling)
+    {
+        objectType = "Floor/Ceiling";
+        isPassable = false;
+        distance = trace.Distance;
+        position = DVector2(trace.HitLocation.X, trace.HitLocation.Y);
     }
     else
     {
-        AI_Log(AI_DEBUG_INFO, "No door in front of player");
+        objectType = "Passage";
+        isPassable = true;
+        distance = maxDistance;
+        position = DVector2(playerPos.X + lookDir.X * maxDistance, playerPos.Y + lookDir.Y * maxDistance);
+    }
+    
+    // Виводимо інформацію про об'єкт перед гравцем
+    if (strcmp(objectType, "Door") == 0 || strlen(statusStr) > 0)
+    {
+        AI_Log(AI_DEBUG_INFO, "[OBJECT IN FRONT] Type=%s, Status=%s, Passable=%s, Distance=%.2f, Position=(%.2f, %.2f)",
+               objectType, statusStr, isPassable ? "Yes" : "No", distance, position.X, position.Y);
+    }
+    else
+    {
+        AI_Log(AI_DEBUG_INFO, "[OBJECT IN FRONT] Type=%s, Passable=%s, Distance=%.2f, Position=(%.2f, %.2f)",
+               objectType, isPassable ? "Yes" : "No", distance, position.X, position.Y);
     }
     
     // Логуємо інформацію про кожні двері

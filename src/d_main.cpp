@@ -90,6 +90,8 @@
 #include "v_draw.h"
 #include "po_man.h"
 #include "p_local.h"
+#include "playsim/p_maputl.h"
+#include "playsim/p_linetracedata.h"
 #include "autosegs.h"
 #include "fragglescript/t_fs.h"
 #include "g_levellocals.h"
@@ -246,41 +248,56 @@ void UpdateCrosshairObjectInfo(player_t* player)
             target->flags2,
             target->flags3);
         
-        if (target->flags & MF_SHOOTABLE)
+        // Отримуємо назву типу об'єкта
+        const char* typeName = target->GetClass()->TypeName.GetChars();
+        
+        // Визначаємо тип об'єкта більш точно (уніфіковано з p_doorinfo.cpp)
+        if (target->flags3 & MF3_ISMONSTER)
         {
-            if (target->flags3 & MF3_ISMONSTER)
-                objectType = "Monster";
-            else if (target->player)
-                objectType = "Player";
+            // Це монстр
+            objectType = "Monster";
+            
+            // Додаємо статус монстра (живий/мертвий)
+            if (target->health <= 0)
+            {
+                objectType = FStringf("Monster (Dead)").GetChars();
+            }
             else
-                objectType = "Shootable";
+            {
+                objectType = FStringf("Monster (Alive)").GetChars();
+            }
         }
         else if (target->flags & MF_SPECIAL)
-            objectType = "Item";
-        
-        // Розширена перевірка дверей за різними ознаками
-        if (target->GetClass()->TypeName.GetChars())
         {
-            const char* typeName = target->GetClass()->TypeName.GetChars();
+            // Це предмет, який можна підібрати
+            objectType = "Pickup";
+        }
+        else if (target->player)
+        {
+            // Це гравець
+            objectType = "Player";
+        }
+        else if (strstr(typeName, "Door") || 
+                 strstr(typeName, "door") || 
+                 strstr(typeName, "Gate") || 
+                 strstr(typeName, "gate") ||
+                 strstr(typeName, "Exit") || 
+                 strstr(typeName, "exit") ||
+                 strstr(typeName, "Switch") || 
+                 strstr(typeName, "switch"))
+        {
+            // Це двері або об'єкт, який можна активувати
+            objectType = "Door";
+            isDoor = true;
             
-            // Перевіряємо різні варіанти назв дверей
-            if (strstr(typeName, "Door") || 
-                strstr(typeName, "door") || 
-                strstr(typeName, "Gate") || 
-                strstr(typeName, "gate") ||
-                strstr(typeName, "Exit") || 
-                strstr(typeName, "exit") ||
-                strstr(typeName, "Switch") || 
-                strstr(typeName, "switch") ||
-                (target->flags & MF_SOLID))
-            {
-                objectType = "Door";
-                isDoor = true;
-                
-                // Додаткова інформація для діагностики
-                AI_Log(AI_DEBUG_INFO, "Door detected: %s, flags: %08X, flags2: %08X, flags3: %08X\n", 
-                       typeName, target->flags, target->flags2, target->flags3);
-            }
+            // Додаткова інформація для діагностики
+            AI_Log(AI_DEBUG_INFO, "Door detected: %s, flags: %08X, flags2: %08X, flags3: %08X\n", 
+                   typeName, target->flags, target->flags2, target->flags3);
+        }
+        else
+        {
+            // Декорація або інший об'єкт
+            objectType = "Decoration";
         }
         
         // Заповнюємо змінну для відображення на екрані
@@ -304,12 +321,70 @@ void UpdateCrosshairObjectInfo(player_t* player)
     }
     else
     {
-        // Нічого не знайдено в прицілі
-        g_crosshairObjectInfo = "Crosshair: nothing in front of you";
-        AI_Log(AI_DEBUG_INFO, "Crosshair object: nothing\n");
+        // Нічого не знайдено в прицілі за допомогою P_AimLineAttack
+        // Спробуємо використати трасування для виявлення стін і дверей
+        FLineTraceData trace;
+        double maxDistance = 2048.0;
         
-        // Логуємо напрямок променя для діагностики
-        AI_Log(AI_DEBUG_INFO, "Player direction: yaw: %.2f\n", player->mo->Angles.Yaw.Degrees());
+        // Використовуємо трасування з p_maputl.h
+        P_LineTrace(player->mo, 
+                   player->mo->Angles.Yaw, 
+                   maxDistance, 
+                   DAngle::fromDeg(0.0), // pitch
+                   TRF_ALLACTORS | TRF_NOSKY, // прапорці для виявлення всіх акторів та ігнорування неба
+                   0.0, // offsetz
+                   0.0, // offsetforward
+                   0.0, // offsetside
+                   &trace);
+        
+        if (trace.HitType == TRACE_HitWall && trace.HitLine)
+        {
+            // Перевіряємо, чи це двері
+            bool isDoor = IsDoor(trace.HitLine);
+            const char* objectType = isDoor ? "Door" : "Wall";
+            double distance = trace.Distance;
+            
+            // Визначаємо статус дверей
+            const char* statusStr = "";
+            if (isDoor)
+            {
+                int status = GetDoorStatus(trace.HitLine, trace.HitLine->frontsector);
+                bool isPassable = IsDoorPassable(trace.HitLine, trace.HitLine->frontsector);
+                
+                switch (status)
+                {
+                    case DOOR_OPENED: statusStr = "Open"; break;
+                    case DOOR_CLOSED: statusStr = "Closed"; break;
+                    case DOOR_OPENING: statusStr = "Opening"; break;
+                    case DOOR_CLOSING: statusStr = "Closing"; break;
+                    case DOOR_WAITING: statusStr = "Waiting"; break;
+                    case DOOR_UNKNOWN: statusStr = "Unknown"; break;
+                }
+                
+                g_crosshairObjectInfo = FStringf("Crosshair: %s (%s) at %.1f units", 
+                    objectType, statusStr, distance);
+            }
+            else
+            {
+                g_crosshairObjectInfo = FStringf("Crosshair: %s at %.1f units", 
+                    objectType, distance);
+            }
+            
+            AI_Log(AI_DEBUG_INFO, "Crosshair object: %s%s%s at %.1f units\n", 
+                objectType, 
+                isDoor ? " (" : "", 
+                isDoor ? statusStr : "", 
+                distance);
+        }
+        else
+        {
+            // Нічого не знайдено в прицілі
+            g_crosshairObjectInfo = "Crosshair: nothing in front of you";
+            AI_Log(AI_DEBUG_INFO, "Crosshair object: nothing\n");
+            
+            // Логуємо напрямок променя для діагностики
+            AI_Log(AI_DEBUG_INFO, "Player direction: yaw: %.2f\n", player->mo->Angles.Yaw.Degrees());
+        }
     }
 }
 
@@ -320,6 +395,13 @@ void UpdateVisibleObjects(player_t* player)
 
     if (!player || !player->mo)
         return;
+        
+    // Завжди викликаємо LogDoorInfo для відображення інформації про двері перед гравцем
+    // незалежно від налаштувань логування
+    LogDoorInfo(player);
+    
+    // Додаткове логування для перевірки
+    // Printf(PRINT_HIGH, "LogDoorInfo called in UpdateVisibleObjects\n");
 
     // Оптимізація: перевіряємо частоту логування та рівень деталізації
     // Логуємо лише кожен N-й виклик функції, де N - log_frequency з конфігурації
