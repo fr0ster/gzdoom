@@ -13,6 +13,7 @@ struct DoorInfo
     bool isPassable;      // Чи можна пройти через двері
     int status;           // Статус дверей (відкриті, закриті, відкриваються, закриваються)
     double distance;      // Відстань від гравця до дверей
+    int keyType;          // Тип ключа, необхідний для відкриття дверей (0 - не потрібен ключ)
 };
 
 // Статуси дверей
@@ -23,8 +24,12 @@ enum DoorStatus
     DOOR_OPENING = 2,
     DOOR_CLOSING = 3,
     DOOR_WAITING = 4,
+    DOOR_LOCKED = 5,    // Двері заблоковані ключем
     DOOR_UNKNOWN = -1
 };
+
+// Функція для визначення статусу дверей
+int GetDoorStatus(line_t* line, sector_t* sector, player_t* player = nullptr);
 
 // Функція для отримання списку видимих дверей
 TArray<DoorInfo> GetVisibleDoors(player_t* player);
@@ -42,6 +47,15 @@ bool IsDoorPassable(line_t* line, sector_t* sector);
 
 // Функція для визначення дверей перед гравцем
 DoorInfo* GetDoorInFront(player_t* player, double maxDistance = 200.0);
+
+// Функція для отримання типу ключа для дверей
+int GetKeyTypeForDoor(line_t* line);
+
+// Функція для отримання назви типу ключа за його номером
+FString GetKeyTypeName(int keyType);
+
+// Функція для формування рядка статусу дверей з урахуванням типу ключа
+FString GetDoorStatusString(int doorStatus, line_t* line);
 
 // Функція для логування інформації про двері
 void LogDoorInfo(player_t* player);
