@@ -205,41 +205,23 @@ void AI_Shutdown()
     // Використовуємо AI_Log з ai_config.cpp для логування
     AI_Log(AI_DEBUG_INFO, "AI_Shutdown called\n"); 
 }
-// Глобальні змінні для відстеження стану дверей у прицілі
-static double lastDoorAngle = 0.0;
-static bool hadDoorLastFrame = false;
-
 // Функція для отримання інформації про об'єкт в прицілі гравця
 void UpdateCrosshairObjectInfo(player_t* player)
 {
     static int call_count = 0;
     call_count++;
     
-    // Ініціалізуємо статус прицілу як "нічого" на початку
-    // Це гарантує, що статус буде очищено, якщо не буде знайдено жодного об'єкта
-    g_crosshairObjectInfo = "Crosshair: nothing in front of you";
-    
-    // Діагностика: виводимо інформацію про виклик функції
-    Printf("DEBUG CROSSHAIR: Функція UpdateCrosshairObjectInfo викликана, call_count=%d\n", call_count);
-    
-    // Оновлюємо інформацію при кожному виклику для діагностики
-    // Тимчасово вимкнена оптимізація для діагностики
-    /*
+    // Оновлюємо інформацію тільки кожні N виклики для оптимізації
     if (call_count % 3 != 0) // Оновлюємо частіше - кожні 3 виклики
-    {
-        Printf("DEBUG CROSSHAIR: Пропуск оновлення через оптимізацію (call_count=%d)\n", call_count);
         return;
-    }
-    */
-    Printf("DEBUG CROSSHAIR: Оновлення при кожному виклику (call_count=%d)\n", call_count);
     
     if (!player || !player->mo)
         return;
     
     // Скидаємо глобальні змінні статусу дверей перед кожним оновленням прицілу
     // Це дозволяє уникнути використання застарілого статусу для нових дверей
-    // Printf("DEBUG: Скидання глобальних змінних статусу дверей. Попередні значення: status=%d, line=%p, sector=%p\n", 
-    //        g_lastDoorStatus, g_lastDoorLine, g_lastDoorSector);
+    Printf("DEBUG: Скидання глобальних змінних статусу дверей. Попередні значення: status=%d, line=%p, sector=%p\n", 
+           g_lastDoorStatus, g_lastDoorLine, g_lastDoorSector);
     g_lastDoorStatus = DOOR_UNKNOWN;
     g_lastDoorLine = nullptr;
     g_lastDoorSector = nullptr;
@@ -247,145 +229,36 @@ void UpdateCrosshairObjectInfo(player_t* player)
     // Прапорці, що вказують на можливі двері
     const uint32_t DOOR_FLAGS = MF_SOLID;
     
-    // Діагностика: виводимо кут погляду гравця для відстеження повороту
-    double playerYaw = player->mo->Angles.Yaw.Degrees();
-    Printf("DEBUG ANGLE: Гравець дивиться під кутом %.1f градусів\n", playerYaw);
-    
-    // Використовуємо трасування для отримання лінії
-    FLineTraceData lineTrace;
-    
-    P_LineTrace(player->mo, 
-               player->mo->Angles.Yaw, 
-               2048.0, 
-               DAngle::fromDeg(0.0), // pitch
-               TRF_ALLACTORS, // Дозволяємо проходити крізь акторів
-               0.0, // offsetz
-               0.0, // offsetforward
-               0.0, // offsetside
-               &lineTrace);
-    
-    // Діагностика: виводимо результат трасування
-    Printf("DEBUG TRACE: HitType=%d, Distance=%.2f, HitLine=%p, HitSector=%p, HitActor=%p\n", 
-           lineTrace.HitType, lineTrace.Distance, lineTrace.HitLine, lineTrace.HitSector, lineTrace.HitActor);
-           
-    // Додаткова діагностика для лінії
-    if (lineTrace.HitLine)
-    {
-        line_t* line = lineTrace.HitLine;
-        Printf("DEBUG LINE: flags=%d, special=%d, frontsector=%p, backsector=%p\n",
-               line->flags, line->special, line->frontsector, line->backsector);
-               
-        // Перевіряємо чи це двері
-        bool isDoorTest = IsDoor(line);
-        Printf("DEBUG DOOR TEST: IsDoor=%d\n", isDoorTest);
-    }
-    
-    // Для зворотної сумісності також використовуємо P_AimLineAttack
+    // Спочатку спробуємо стандартний метод
     FTranslatedLineTarget t;
     P_AimLineAttack(player->mo, DAngle::fromDeg(player->mo->Angles.Yaw.Degrees()), 2048.0, &t, DAngle::fromDeg(0.0), ALF_CHECKNONSHOOTABLE|ALF_FORCENOSMART);
     
     // Логуємо для діагностики
-    Printf("DEBUG CROSSHAIR: P_AimLineAttack результат: %s, linetarget=%p\n", t.linetarget ? "hit" : "miss", t.linetarget);
     AI_Log(AI_DEBUG_INFO, "P_AimLineAttack result: %s\n", t.linetarget ? "hit" : "miss");
     
-    // Перевіряємо результати трасування для відображення інформації в прицілі
-    bool objectFound = false;
+    // Якщо стандартний метод не знайшов нічого, спробуємо інші параметри
+    if (!t.linetarget) {
+        // Спробуємо без прапорців
+        P_AimLineAttack(player->mo, DAngle::fromDeg(player->mo->Angles.Yaw.Degrees()), 2048.0, &t, DAngle::fromDeg(0.0), 0);
+        AI_Log(AI_DEBUG_INFO, "P_AimLineAttack (no flags) result: %s\n", t.linetarget ? "hit" : "miss");
+    }
     
-    // Максимальна відстань для відображення стіни в прицілі
-    const double MAX_WALL_DISTANCE = 128.0;
-    
-    // Спочатку перевіряємо чи знайдено актора (linetarget)
     if (t.linetarget)
     {
         // Отримали об'єкт в прицілі
         AActor* target = t.linetarget;
         double distance = (target->Pos() - player->mo->Pos()).Length();
-        
-        Printf("DEBUG CROSSHAIR: Знайдено об'єкт в прицілі: %s, відстань=%.1f\n", 
-               target->GetClass()->TypeName.GetChars(), distance);
         
         // Визначаємо тип об'єкта
         const char* objectType = "Unknown";
         bool isDoor = false;
         
         // Логуємо детальну інформацію про об'єкт для діагностики
-        Printf("DEBUG CROSSHAIR: Деталі об'єкта: %s, flags=%08X, flags2=%08X, flags3=%08X\n", 
-               target->GetClass()->TypeName.GetChars(), target->flags, target->flags2, target->flags3);
-        
         AI_Log(AI_DEBUG_INFO, "Crosshair raw object: %s, flags: %08X, flags2: %08X, flags3: %08X\n", 
             target->GetClass()->TypeName.GetChars(),
             target->flags,
             target->flags2,
             target->flags3);
-        
-        // Актори (монстри, предмети) завжди показуємо незалежно від відстані
-        g_crosshairObjectInfo = FStringf("Crosshair: %s at %.1f units", 
-                                       target->GetClass()->TypeName.GetChars(), 
-                                       distance);
-        objectFound = true;
-    }
-    // Якщо не знайдено актора, перевіряємо чи знайдено лінію (HitLine)
-    else if (lineTrace.HitLine)
-    {
-        line_t* line = lineTrace.HitLine;
-        double distance = lineTrace.Distance;
-        
-        Printf("DEBUG CROSSHAIR: Знайдено лінію в прицілі, відстань=%.1f\n", distance);
-        
-        // Перевіряємо чи це двері
-        bool isDoorByLine = IsDoor(line);
-        
-        if (isDoorByLine)
-        {
-            Printf("DEBUG CROSSHAIR: Знайдено двері в прицілі\n");
-            
-            // Двері завжди показуємо незалежно від відстані
-            // Отримуємо статус дверей
-            int doorStatus = GetDoorStatus(line, line->frontsector, player);
-            
-            // Виводимо статус дверей в приціл
-            FString statusStr = GetDoorStatusString((DoorStatus)doorStatus, line);
-            g_crosshairObjectInfo = statusStr;
-            Printf("DEBUG CROSSHAIR: Статус дверей: %s\n", statusStr.GetChars());
-            objectFound = true;
-        }
-        else
-        {
-            // Якщо це стіна, показуємо її тільки якщо вона близько
-            if (distance <= MAX_WALL_DISTANCE)
-            {
-                g_crosshairObjectInfo = FStringf("Crosshair: Wall at %.1f units", distance);
-                Printf("DEBUG CROSSHAIR: Знайдено стіну в прицілі на близькій відстані %.1f\n", distance);
-                objectFound = true;
-            }
-            else
-            {
-                Printf("DEBUG CROSSHAIR: Стіна знайдена, але на великій відстані %.1f > %.1f, не показуємо\n", distance, MAX_WALL_DISTANCE);
-                // Не встановлюємо objectFound, щоб показати "нічого нема"
-            }
-        }
-    }
-    
-    // Якщо нічого не знайдено, виводимо порожній статус
-    if (!objectFound)
-    {
-        g_crosshairObjectInfo = "Crosshair: nothing in front of you";
-        Printf("DEBUG CROSSHAIR: Нічого не знайдено в прицілі\n");
-    }
-    
-    // Діагностика: виводимо значення g_crosshairObjectInfo
-    Printf("DEBUG FINAL: g_crosshairObjectInfo = '%s'\n", g_crosshairObjectInfo.GetChars());
-    
-    // Продовжуємо обробку акторів, якщо вони знайдені
-    if (t.linetarget)
-    {
-        // Отримали об'єкт в прицілі
-        AActor* target = t.linetarget;
-        double distance = (target->Pos() - player->mo->Pos()).Length();
-        
-        // Визначаємо тип об'єкта
-        const char* objectType = "Unknown";
-        const char* objectName = target->GetClass()->TypeName.GetChars();
         
         // Отримуємо назву типу об'єкта
         const char* typeName = target->GetClass()->TypeName.GetChars();
@@ -416,166 +289,22 @@ void UpdateCrosshairObjectInfo(player_t* player)
             // Це гравець
             objectType = "Player";
         }
-        else if (target->flags & MF_SOLID && !(target->flags & MF_SHOOTABLE))
+        else if (strstr(typeName, "Door") || 
+                 strstr(typeName, "door") || 
+                 strstr(typeName, "Gate") || 
+                 strstr(typeName, "gate") ||
+                 strstr(typeName, "Exit") || 
+                 strstr(typeName, "exit") ||
+                 strstr(typeName, "Switch") || 
+                 strstr(typeName, "switch"))
         {
-            // Це може бути стіна або двері
-            // Перевіряємо назву типу для точнішого визначення
+            // Це двері або об'єкт, який можна активувати
+            objectType = "Door";
+            isDoor = true;
             
-            // Перевіряємо чи це може бути лінія (стіна або двері)
-            // Використовуємо трасування для отримання лінії
-            FLineTraceData lineTrace;
-            
-            // Діагностика: виводимо кут погляду гравця для відстеження повороту
-            double playerYaw = player->mo->Angles.Yaw.Degrees();
-            Printf("DEBUG ANGLE: Гравець дивиться під кутом %.1f градусів\n", playerYaw);
-            
-            P_LineTrace(player->mo, 
-                       player->mo->Angles.Yaw, 
-                       2048.0, 
-                       DAngle::fromDeg(0.0), // pitch
-                       TRF_ALLACTORS, // Дозволяємо проходити крізь акторів
-                       0.0, // offsetz
-                       0.0, // offsetforward
-                       0.0, // offsetside
-                       &lineTrace);
-            
-            // Діагностика: виводимо результат трасування
-            Printf("DEBUG TRACE: HitType=%d, Distance=%.2f, HitLine=%p, HitSector=%p\n", 
-                   lineTrace.HitType, lineTrace.Distance, lineTrace.HitLine, lineTrace.HitSector);
-            
-            if (lineTrace.HitLine)
-            {
-                Printf("DEBUG TRACE: Лінія знайдена, special=%d, flags=%d\n", 
-                       lineTrace.HitLine->special, lineTrace.HitLine->flags);
-            }
-            
-            line_t* line = lineTrace.HitLine;
-            bool isDoorByLine = false;
-            
-            if (line != nullptr)
-            {
-                // Використовуємо ту ж логіку, що і в IsDoor
-                Printf("DEBUG DOOR CHECK: Перевіряємо line->special=%d\n", line->special);
-                if (line->special == Door_Raise || 
-                    line->special == Door_Open || 
-                    line->special == Door_Close || 
-                    line->special == Door_LockedRaise || 
-                    line->special == Generic_Door)
-                {
-                    isDoorByLine = true;
-                    Printf("DEBUG DOOR CHECK: Знайдено двері за special=%d\n", line->special);
-                }
-                else if (!line->backsector)
-                {
-                    // Якщо немає backsector, це може бути стіна або двері без backsector
-                    // Перевіряємо чи є special значення, характерні для дверей
-                    if (line->special > 0)
-                    {
-                        // Типові значення для дверей зазвичай в діапазоні 1-10, 12-14, 26-33, 46, 61, 63, 90, 105, 108
-                        if ((line->special >= 1 && line->special <= 10) ||
-                            (line->special >= 12 && line->special <= 14) ||
-                            (line->special >= 26 && line->special <= 33) ||
-                            line->special == 46 || line->special == 61 || 
-                            line->special == 63 || line->special == 90 || 
-                            line->special == 105 || line->special == 108)
-                        {
-                            isDoorByLine = true;
-                        }
-                    }
-                }
-                else if (line->flags & ML_BLOCKING)
-                {
-                    // Перевіряємо чи це заблоковані двері (мають прапорець ML_BLOCKING)
-                    // Додаткова перевірка для уникнення хибних спрацьовань
-                    double frontFloor = line->frontsector->floorplane.ZatPoint(line->v1->fPos());
-                    double backFloor = line->backsector->floorplane.ZatPoint(line->v1->fPos());
-                    double frontCeil = line->frontsector->ceilingplane.ZatPoint(line->v1->fPos());
-                    double backCeil = line->backsector->ceilingplane.ZatPoint(line->v1->fPos());
-                    
-                    // Перевіряємо текстуру для додаткової перевірки
-                    FTextureID midtex = line->sidedef[0]->GetTexture(side_t::mid);
-                    bool hasMidTexture = midtex.isValid() && midtex != FNullTextureID();
-                    
-                    // Якщо є значна різниця висот або середня текстура, це двері
-                    if ((fabs(frontCeil - backCeil) > 1.0 || fabs(frontFloor - backFloor) > 1.0) || hasMidTexture)
-                    {
-                        isDoorByLine = true;
-                    }
-                }
-                else if (line->sidedef[0] && line->sidedef[0]->GetTexture(side_t::mid).isValid())
-                {
-                    FTextureID midtex = line->sidedef[0]->GetTexture(side_t::mid);
-                    if (midtex != FNullTextureID())
-                    {
-                        // Додаткова перевірка для уникнення хибних спрацьовань
-                        double frontFloor = line->frontsector->floorplane.ZatPoint(line->v1->fPos());
-                        double backFloor = line->backsector->floorplane.ZatPoint(line->v1->fPos());
-                        double frontCeil = line->frontsector->ceilingplane.ZatPoint(line->v1->fPos());
-                        double backCeil = line->backsector->ceilingplane.ZatPoint(line->v1->fPos());
-                        
-                        // Якщо є значна різниця висот, це двері
-                        if (fabs(frontCeil - backCeil) > 1.0 || fabs(frontFloor - backFloor) > 1.0)
-                        {
-                            isDoorByLine = true;
-                        }
-                    }
-                }
-                else if (line->frontsector && line->backsector)
-                {
-                    // Перевіряємо чи є значна різниця висот підлоги або стелі
-                    double frontFloor = line->frontsector->floorplane.ZatPoint(line->v1->fPos());
-                    double backFloor = line->backsector->floorplane.ZatPoint(line->v1->fPos());
-                    double frontCeil = line->frontsector->ceilingplane.ZatPoint(line->v1->fPos());
-                    double backCeil = line->backsector->ceilingplane.ZatPoint(line->v1->fPos());
-                    
-                    // Двері мають значну різницю висот (більше 16 юнітів)
-                    if (fabs(frontCeil - backCeil) > 16.0 || fabs(frontFloor - backFloor) > 16.0)
-                    {
-                        isDoorByLine = true;
-                    }
-                }
-            }
-            
-            // Перевіряємо назву типу для точнішого визначення
-            bool isDoorByName = strstr(typeName, "Door") || 
-                                strstr(typeName, "door") || 
-                                strstr(typeName, "Gate") || 
-                                strstr(typeName, "gate") ||
-                                strstr(typeName, "Exit") || 
-                                strstr(typeName, "exit") ||
-                                strstr(typeName, "Switch") || 
-                                strstr(typeName, "switch");
-            
-            // Якщо це двері за лінією або за назвою
-            if (isDoorByLine || isDoorByName)
-            {
-                // Це двері або об'єкт, який можна активувати
-                objectType = "Door";
-                bool isDoorObj = true;
-                
-                // Запам'ятовуємо кут, під яким були знайдені двері
-                lastDoorAngle = player->mo->Angles.Yaw.Degrees();
-                hadDoorLastFrame = true;
-                Printf("DEBUG DOOR: Знайдено двері під кутом %.1f\n", lastDoorAngle);
-                
-                // Додаткова інформація для діагностики
-                AI_Log(AI_DEBUG_INFO, "Door detected: %s, flags: %08X, isDoorByLine: %d, isDoorByName: %d\n", 
-                       typeName, target->flags, isDoorByLine, isDoorByName);
-            }
-            else
-            {
-                // Це стіна або інший солідний об'єкт
-                objectType = "Wall";
-                bool isDoorObj = false;
-                
-                // Скидаємо флаг дверей, якщо це стіна
-                hadDoorLastFrame = false;
-                Printf("DEBUG WALL: Знайдено стіну під кутом %.1f\n", player->mo->Angles.Yaw.Degrees());
-                
-                // Додаткова інформація для діагностики
-                AI_Log(AI_DEBUG_INFO, "Wall detected: %s, flags: %08X, isDoorByLine: %d, isDoorByName: %d\n", 
-                       typeName, target->flags, isDoorByLine, isDoorByName);
-            }
+            // Додаткова інформація для діагностики
+            AI_Log(AI_DEBUG_INFO, "Door detected: %s, flags: %08X, flags2: %08X, flags3: %08X\n", 
+                   typeName, target->flags, target->flags2, target->flags3);
         }
         else
         {
@@ -584,53 +313,121 @@ void UpdateCrosshairObjectInfo(player_t* player)
         }
         
         // Заповнюємо змінну для відображення на екрані
-        // Спрощена версія: відображаємо лише тип об'єкта без статусу дверей
-        
-        // Скидаємо глобальні змінні статусу дверей
-        g_lastDoorStatus = DOOR_UNKNOWN;
-        g_lastDoorLine = nullptr;
-        g_lastDoorSector = nullptr;
-        
-        // Формуємо рядок для прицілу без статусу дверей
-        // Отримуємо назву об'єкта
-        // Використовуємо вже визначений objectName вище
-        
-        if (strcmp(objectType, "Door") == 0) {
-            // Для дверей показуємо тип та назву
-            g_crosshairObjectInfo = FStringf("Crosshair: %s (Door) at %.1f units", 
-                                            objectName, distance);
+        if (isDoor) {
+            // Визначаємо статус дверей через трасування, щоб знайти відповідну лінію
+            FLineTraceData doorTrace;
             
-            Printf("DEBUG: Відображення дверей у прицілі: %s\n", objectName);
-        } 
-        else if (target->flags3 & MF3_ISMONSTER) {
-            // Для монстрів показуємо тип, назву та статус
-            const char* status = (target->health <= 0) ? "Dead" : "Alive";
-            g_crosshairObjectInfo = FStringf("Crosshair: %s (%s - %s) at %.1f units", 
-                                            objectName, objectType, status, distance);
+            // Використовуємо прапорець TRF_ALLACTORS, щоб трасування проходило крізь акторів і знаходило стіни/двері за ними
+            P_LineTrace(player->mo, 
+                       player->mo->Angles.Yaw, 
+                       distance + 100.0, // Значно більше відстані, щоб точно потрапити в двері навіть якщо є об'єкти перед ними
+                       DAngle::fromDeg(0.0), // pitch
+                       TRF_ALLACTORS, // Дозволяємо проходити крізь акторів
+                       0.0, // offsetz
+                       0.0, // offsetforward
+                       0.0, // offsetside
+                       &doorTrace);
             
-            Printf("DEBUG: Відображення монстра у прицілі: %s (%s)\n", objectName, status);
-        }
-        else if (target->flags & MF_SPECIAL) {
-            // Для предметів показуємо тип та назву
-            g_crosshairObjectInfo = FStringf("Crosshair: %s (Pickup) at %.1f units", 
-                                            objectName, distance);
+            // Діагностика результатів трасування
+            Printf("DEBUG: Door trace results - HitType=%d, HitLine=%p, HitActor=%p\n", 
+                   doorTrace.HitType, doorTrace.HitLine, doorTrace.HitActor);
             
-            Printf("DEBUG: Відображення предмета у прицілі: %s\n", objectName);
-        }
-        else {
-            // Для інших об'єктів показуємо тип та назву
+            // Перевіряємо, чи знайшли двері
+            bool foundDoor = false;
+            line_t* doorLine = nullptr;
+            sector_t* doorSector = nullptr;
+            
+            // В структурі FLineTraceData немає полів LineCount та Lines,
+            // тому ми можемо перевірити лише кінцеву лінію
+            
+            // Перевіряємо кінцеву лінію на наявність дверей
+            if (doorTrace.HitType == TRACE_HitWall && doorTrace.HitLine && IsDoor(doorTrace.HitLine)) {
+                doorLine = doorTrace.HitLine;
+                doorSector = doorLine->frontsector;
+                foundDoor = true;
+                Printf("DEBUG: Found door at hit line\n");
+            }
+            
+            const char* statusStr = "";
+            if (foundDoor && doorLine) {
+                // Використовуємо саме ту лінію/двері, що у прицілі (doorTrace.HitLine)
+                // Це важливо для синхронізації з логами
+                line_t* actualDoorLine = doorTrace.HitLine;
+                sector_t* actualDoorSector = actualDoorLine->frontsector;
+                
+                // Детальна діагностика лінії дверей
+                Printf("DEBUG CROSSHAIR: Детальна інформація про лінію дверей:\n");
+                Printf("DEBUG CROSSHAIR: line=%p, index=%d, flags=0x%x, special=%d, locknumber=%d\n", 
+                       actualDoorLine, actualDoorLine->Index(), actualDoorLine->flags, actualDoorLine->special, actualDoorLine->locknumber);
+                Printf("DEBUG CROSSHAIR: args=[%d,%d,%d,%d,%d]\n", 
+                       actualDoorLine->args[0], actualDoorLine->args[1], actualDoorLine->args[2], 
+                       actualDoorLine->args[3], actualDoorLine->args[4]);
+                Printf("DEBUG CROSSHAIR: ML_BLOCKING=%d\n", (actualDoorLine->flags & ML_BLOCKING) ? 1 : 0);
+                
+                // Перевірка геометрії дверей
+                if (actualDoorLine->backsector && actualDoorLine->frontsector) {
+                    double frontFloor = actualDoorLine->frontsector->floorplane.ZatPoint(actualDoorLine->v1->fPos());
+                    double frontCeil = actualDoorLine->frontsector->ceilingplane.ZatPoint(actualDoorLine->v1->fPos());
+                    double backFloor = actualDoorLine->backsector->floorplane.ZatPoint(actualDoorLine->v1->fPos());
+                    double backCeil = actualDoorLine->backsector->ceilingplane.ZatPoint(actualDoorLine->v1->fPos());
+                    
+                    double lowestCeil = min(frontCeil, backCeil);
+                    double highestFloor = max(frontFloor, backFloor);
+                    double openingHeight = lowestCeil - highestFloor;
+                    
+                    Printf("DEBUG CROSSHAIR: Геометрія дверей: opening height=%.2f\n", openingHeight);
+                }
+                
+                // Перевірка наявності thinker-а для дверей
+                bool hasThinker = false;
+                int thinkerStatus = -1;
+                
+                TThinkerIterator<DDoor> it(actualDoorSector->Level);
+                DDoor *door;
+                while ((door = it.Next())) {
+                    if (door->GetSector() == actualDoorSector) {
+                        hasThinker = true;
+                        thinkerStatus = door->m_Direction;
+                        break;
+                    }
+                }
+                
+                Printf("DEBUG CROSSHAIR: Наявність thinker-а: %s, статус=%d\n", 
+                       hasThinker ? "Так" : "Ні", thinkerStatus);
+                
+                // Отримуємо статус дверей
+                // Скидаємо глобальні змінні перед отриманням статусу
+                g_lastDoorStatus = DOOR_UNKNOWN;
+                g_lastDoorLine = nullptr;
+                g_lastDoorSector = nullptr;
+                
+                int doorStatus = GetDoorStatus(actualDoorLine, actualDoorSector, player);
+                FString doorStatusString = GetDoorStatusString(doorStatus, actualDoorLine);
+                statusStr = doorStatusString.GetChars();
+                
+                // Діагностика статусу дверей
+                Printf("DEBUG CROSSHAIR: Статус дверей: %d (%s)\n", doorStatus, statusStr);
+                
+                g_crosshairObjectInfo = FStringf("Crosshair: %s (Door - %s) at %.1f units", 
+                    target->GetClass()->TypeName.GetChars(),
+                    statusStr,
+                    distance);
+                    
+                Printf("DEBUG: Door status: %s\n", statusStr);
+            } else {
+                // Якщо не вдалося визначити статус дверей через трасування, використовуємо базовий варіант
+                g_crosshairObjectInfo = FStringf("Crosshair: %s (Door) at %.1f units", 
+                    target->GetClass()->TypeName.GetChars(),
+                    distance);
+                    
+                Printf("DEBUG: Could not determine door status\n");
+            }
+        } else {
             g_crosshairObjectInfo = FStringf("Crosshair: %s (%s) at %.1f units", 
-                                            objectName, objectType, distance);
-            
-            Printf("DEBUG: Відображення об'єкта у прицілі: %s (%s)\n", objectName, objectType);
+                target->GetClass()->TypeName.GetChars(),
+                objectType,
+                distance);
         }
-        
-        // Логуємо детальну інформацію про об'єкт
-        AI_Log(AI_DEBUG_INFO, "Crosshair object: %s (%s) at %.1f units, flags: %08X\n", 
-            target->GetClass()->TypeName.GetChars(),
-            objectType,
-            distance,
-            target->flags);
             
         // Логуємо детальну інформацію про об'єкт
         AI_Log(AI_DEBUG_INFO, "Crosshair object: %s (%s) at %.1f units, flags: %08X\n", 
@@ -645,36 +442,6 @@ void UpdateCrosshairObjectInfo(player_t* player)
         // Спробуємо використати трасування для виявлення стін і дверей
         FLineTraceData trace;
         double maxDistance = 2048.0;
-        
-        // Скидаємо статус дверей перед трасуванням
-        // Це гарантує, що статус буде скинуто, якщо трасування не знайде двері
-        
-        // Зберігаємо останній кут погляду, під яким були знайдені двері
-        static double lastDoorAngle = 0.0;
-        static bool hadDoorLastFrame = false;
-        
-        // Отримуємо поточний кут погляду
-        double currentAngle = player->mo->Angles.Yaw.Degrees();
-        
-        // Якщо раніше бачили двері, перевіряємо чи відвернувся гравець на значний кут
-        if (hadDoorLastFrame) {
-            // Обчислюємо різницю кутів (враховуючи можливий перехід через 0/360)
-            double angleDiff = fabs(currentAngle - lastDoorAngle);
-            if (angleDiff > 180.0) angleDiff = 360.0 - angleDiff;
-            
-            // Якщо гравець відвернувся на більше 45 градусів, скидаємо статус дверей
-            if (angleDiff > 45.0) {
-                Printf("DEBUG ANGLE: Гравець відвернувся на %.1f градусів, скидаємо статус дверей\n", angleDiff);
-                g_lastDoorStatus = DOOR_UNKNOWN;
-                g_lastDoorLine = nullptr;
-                g_lastDoorSector = nullptr;
-                hadDoorLastFrame = false;
-            }
-        }
-        
-        g_lastDoorStatus = DOOR_UNKNOWN;
-        g_lastDoorLine = nullptr;
-        g_lastDoorSector = nullptr;
         
         // Використовуємо трасування з p_maputl.h
         Printf("DEBUG: Виконуємо трасування з кутом %.1f\n", player->mo->Angles.Yaw.Degrees());
@@ -702,6 +469,7 @@ void UpdateCrosshairObjectInfo(player_t* player)
             
             // Використовуємо перевірку на типові значення special для дверей
             // Замість констант використовуємо числові значення
+            // Типові значення для дверей зазвичай в діапазоні 1-10, 12-14, 26-33, 46, 61, 63, 90, 105, 108
             bool hasSpecialEffect = false;
             
             // Перевіряємо діапазони значень special, характерні для дверей
@@ -757,13 +525,227 @@ void UpdateCrosshairObjectInfo(player_t* player)
             // Діагностичний вивід для розуміння проблеми з відстанню
             Printf("DEBUG: Raw distance=%.1f, player radius=%.1f, corrected=%.1f\n", trace.Distance, player->mo->radius, distance);
             
-            // Спрощена версія: використовуємо вже визначений isDoor
-            
+            // Визначаємо статус дверей
+            const char* statusName = "UNKNOWN";
             if (isDoor)
             {
-                // Діагностика для відлагодження
-                Printf("DEBUG CROSSHAIR: Знайдено двері, line=%p, special=%d, ML_BLOCKING=%d\n", 
-                       trace.HitLine, trace.HitLine->special, (trace.HitLine->flags & ML_BLOCKING) ? 1 : 0);
+                // Структура для зберігання інформації про двері з найвищим пріоритетом
+                struct HighPriorityDoor {
+                    line_t* line = nullptr;
+                    sector_t* sector = nullptr;
+                    int status = DOOR_UNKNOWN;
+                    int priority = -1;
+                } highPriorityDoor;
+                
+                // Спочатку перевіряємо чи є вже збережений статус дверей в глобальній змінній
+                // Це дозволить уникнути перезапису статусу лочених дверей
+                if (g_lastDoorLine && g_lastDoorSector && g_lastDoorStatus != DOOR_UNKNOWN)
+                {
+                    // Отримуємо пріоритет збереженого статусу
+                    int savedPriority = GetDoorStatusPriority(g_lastDoorStatus);
+                    
+                    // Якщо збережений статус має високий пріоритет (наприклад, LOCKED),
+                    // використовуємо його як початковий для пошуку дверей з найвищим пріоритетом
+                    highPriorityDoor.line = g_lastDoorLine;
+                    highPriorityDoor.sector = g_lastDoorSector;
+                    highPriorityDoor.status = g_lastDoorStatus;
+                    highPriorityDoor.priority = savedPriority;
+                    
+                    Printf("DEBUG CROSSHAIR: Використовуємо збережений статус дверей: %d, пріоритет=%d\n", 
+                           g_lastDoorStatus, savedPriority);
+                }
+                
+                // ВАЖЛИВО: Додаємо додаткове трасування для пошуку всіх дверей у полі зору
+                // Це дозволить знайти всі двері, включаючи заблоковані, які можуть бути за іншими об'єктами
+                
+                // Структура для зберігання інформації про двері
+                struct CrosshairDoorInfo {
+                    line_t* line = nullptr;
+                    sector_t* sector = nullptr;
+                    int status = DOOR_UNKNOWN;
+                    int priority = -1;
+                    double distance = 1024.0;
+                    DVector2 position;
+                    bool isPassable = false;
+                };
+                
+                // Масив для зберігання всіх видимих дверей (як у LogDoorInfo)
+                TArray<CrosshairDoorInfo> visibleDoors;
+                
+                // Спочатку перевіряємо поточні двері
+                sector_t* doorSector = trace.HitLine->frontsector;
+                if (trace.HitLine->backsector && 
+                    (trace.HitLine->frontsector->floorplane.ZatPoint(trace.HitLocation.XY()) > 
+                     trace.HitLine->backsector->floorplane.ZatPoint(trace.HitLocation.XY())))
+                {
+                    doorSector = trace.HitLine->backsector;
+                }
+                
+                // Отримуємо статус поточних дверей
+                int doorStatus = GetDoorStatus(trace.HitLine, doorSector, player);
+                int doorPriority = GetDoorStatusPriority(doorStatus);
+                
+                // Додаємо інформацію про ці двері до масиву всіх видимих дверей
+                CrosshairDoorInfo doorInfo;
+                doorInfo.line = trace.HitLine;
+                doorInfo.sector = doorSector;
+                doorInfo.status = doorStatus;
+                doorInfo.priority = doorPriority;
+                doorInfo.distance = trace.Distance;
+                doorInfo.position = trace.HitLocation.XY();
+                doorInfo.isPassable = true; // Спрощено для прикладу
+                visibleDoors.Push(doorInfo);
+                
+                // Якщо ці двері мають вищий пріоритет, ніж попередні знайдені, запам'ятовуємо їх
+                if (doorPriority > highPriorityDoor.priority)
+                {
+                    highPriorityDoor.line = trace.HitLine;
+                    highPriorityDoor.sector = doorSector;
+                    highPriorityDoor.status = doorStatus;
+                    highPriorityDoor.priority = doorPriority;
+                    
+                    Printf("DEBUG CROSSHAIR: Знайдено двері з вищим пріоритетом: статус=%d, пріоритет=%d\n", 
+                           doorStatus, doorPriority);
+                }
+                
+                // Додаткове трасування для пошуку інших дверей у полі зору
+                // Виконуємо кілька трасувань з невеликими відхиленнями від центру
+                const int numTraces = 5; // Кількість додаткових трасувань
+                const double angleStep = 5.0; // Крок кута в градусах
+                
+                for (int i = -numTraces/2; i <= numTraces/2; i++)
+                {
+                    if (i == 0) continue; // Пропускаємо центральне трасування, воно вже виконане
+                    
+                    FLineTraceData additionalTrace;
+                    double traceAngle = player->mo->Angles.Yaw.Degrees() + i * angleStep;
+                    
+                    // Виконуємо додаткове трасування
+                    P_LineTrace(player->mo, 
+                               DAngle::fromDeg(traceAngle), 
+                               maxDistance, 
+                               DAngle::fromDeg(0.0), // pitch
+                               TRF_ALLACTORS, // Дозволяємо проходити крізь акторів
+                               0.0, // offsetz
+                               0.0, // offsetforward
+                               0.0, // offsetside
+                               &additionalTrace);
+                    
+                    // Перевіряємо, чи знайдено двері
+                    if (additionalTrace.HitType == TRACE_HitWall && additionalTrace.HitLine && IsDoor(additionalTrace.HitLine))
+                    {
+                        // Визначаємо сектор дверей
+                        sector_t* additionalDoorSector = additionalTrace.HitLine->frontsector;
+                        if (additionalTrace.HitLine->backsector && 
+                            (additionalTrace.HitLine->frontsector->floorplane.ZatPoint(additionalTrace.HitLocation.XY()) > 
+                             additionalTrace.HitLine->backsector->floorplane.ZatPoint(additionalTrace.HitLocation.XY())))
+                        {
+                            additionalDoorSector = additionalTrace.HitLine->backsector;
+                        }
+                        
+                        // Отримуємо статус цих дверей
+                        int additionalDoorStatus = GetDoorStatus(additionalTrace.HitLine, additionalDoorSector, player);
+                        int additionalDoorPriority = GetDoorStatusPriority(additionalDoorStatus);
+                        
+                        Printf("DEBUG CROSSHAIR: Додаткове трасування %d: знайдено двері, статус=%d, пріоритет=%d\n", 
+                               i, additionalDoorStatus, additionalDoorPriority);
+                        
+                        // Додаємо інформацію про ці двері до масиву всіх видимих дверей
+                        CrosshairDoorInfo additionalDoorInfo;
+                        additionalDoorInfo.line = additionalTrace.HitLine;
+                        additionalDoorInfo.sector = additionalDoorSector;
+                        additionalDoorInfo.status = additionalDoorStatus;
+                        additionalDoorInfo.priority = additionalDoorPriority;
+                        additionalDoorInfo.distance = additionalTrace.Distance;
+                        additionalDoorInfo.position = additionalTrace.HitLocation.XY();
+                        additionalDoorInfo.isPassable = true; // Спрощено для прикладу
+                        visibleDoors.Push(additionalDoorInfo);
+                        
+                        // Для додаткових трасувань ми використовуємо інший підхід до пріоритету:
+                        // Двері, знайдені при основному трасуванні (те, на що дивиться гравець), мають вищий пріоритет,
+                        // ніж двері, знайдені при додаткових трасуваннях, навіть якщо вони мають вищий статус
+                        // Це дозволяє уникнути ситуації, коли відкрита двері показується як залочена через залочені двері поруч
+                        
+                        // Якщо ще немає збережених дверей з основного трасування (highPriorityDoor.priority < 0),
+                        // або якщо ці двері мають вищий пріоритет і це не LOCKED статус
+                        // (тобто не показуємо LOCKED для дверей, які гравець не бачить безпосередньо)
+                        if ((highPriorityDoor.priority < 0) || 
+                            (additionalDoorPriority > highPriorityDoor.priority && additionalDoorStatus != DOOR_LOCKED))
+                        {
+                            highPriorityDoor.line = additionalTrace.HitLine;
+                            highPriorityDoor.sector = additionalDoorSector;
+                            highPriorityDoor.status = additionalDoorStatus;
+                            highPriorityDoor.priority = additionalDoorPriority;
+                            
+                            Printf("DEBUG CROSSHAIR: Знайдено двері з вищим пріоритетом при додатковому трасуванні: статус=%d, пріоритет=%d\n", 
+                                   additionalDoorStatus, additionalDoorPriority);
+                        }
+                    }
+                }
+                
+                // Діагностика: виводимо інформацію про всі знайдені двері (як у LogDoorInfo)
+                Printf("DEBUG CROSSHAIR: Знайдено %d дверей у полі зору\n", visibleDoors.Size());
+                
+                for (unsigned int i = 0; i < visibleDoors.Size(); i++)
+                {
+                    const auto& door = visibleDoors[i];
+                    const char* doorStatusStr = "Unknown";
+                    
+                    // Перетворюємо статус на рядок
+                    switch (door.status)
+                    {
+                        case DOOR_CLOSED:
+                            doorStatusStr = "Closed";
+                            break;
+                        case DOOR_OPENED:
+                            doorStatusStr = "Opened";
+                            break;
+                        case DOOR_OPENING:
+                            doorStatusStr = "Opening";
+                            break;
+                        case DOOR_CLOSING:
+                            doorStatusStr = "Closing";
+                            break;
+                        case DOOR_WAITING:
+                            doorStatusStr = "Waiting";
+                            break;
+                        case DOOR_LOCKED:
+                            doorStatusStr = "Locked";
+                            break;
+                    }
+                    
+                    // Діагностика кожних дверей
+                    Printf("DEBUG CROSSHAIR DOOR %d: Line=%d, Status=%s, Distance=%.2f, Priority=%d%s\n",
+                          i, door.line->Index(), doorStatusStr, door.distance, door.priority,
+                          (door.line == highPriorityDoor.line && door.sector == highPriorityDoor.sector) ? " (HIGH PRIORITY)" : "");
+                }
+                
+                // Використовуємо двері з найвищим пріоритетом для відображення статусу
+                int displayStatus = doorStatus; // За замовчуванням використовуємо статус поточних дверей
+                
+                // Якщо знайдено двері з вищим пріоритетом, використовуємо їх статус
+                if (highPriorityDoor.priority >= 0)
+                {
+                    displayStatus = highPriorityDoor.status;
+                    Printf("DEBUG CROSSHAIR: Використовуємо статус дверей з найвищим пріоритетом: %d\n", displayStatus);
+                    
+                    // Зберігаємо інформацію про двері з найвищим пріоритетом у глобальних змінних
+                    // для використання при наступному оновленні
+                    g_lastDoorLine = highPriorityDoor.line;
+                    g_lastDoorSector = highPriorityDoor.sector;
+                    g_lastDoorStatus = highPriorityDoor.status;
+                }
+                
+                // Визначаємо ім'я статусу для відображення
+                const char* statusName = "UNKNOWN";
+                switch (displayStatus) {
+                    case DOOR_CLOSED: statusName = "CLOSED"; break;
+                    case DOOR_OPENED: statusName = "OPENED"; break;
+                    case DOOR_OPENING: statusName = "OPENING"; break;
+                    case DOOR_CLOSING: statusName = "CLOSING"; break;
+                    case DOOR_WAITING: statusName = "WAITING"; break;
+                    case DOOR_LOCKED: statusName = "LOCKED"; break;
+                }
                 
                 // Розширена діагностика для порівняння з LogDoorInfo
                 if (trace.HitLine->backsector && trace.HitLine->frontsector) {
@@ -776,52 +758,57 @@ void UpdateCrosshairObjectInfo(player_t* player)
                     double highestFloor = max(frontFloor, backFloor);
                     double openingHeight = lowestCeil - highestFloor;
                     
-                    Printf("DEBUG CROSSHAIR: Геометрія дверей: ML_BLOCKING=%d, special=%d, висота=%.2f, дистанція=%.2f\n", 
-                           (trace.HitLine->flags & ML_BLOCKING) ? 1 : 0, 
+                    Printf("DEBUG CROSSHAIR: Статус дверей: %s (%d), ML_BLOCKING=%d, special=%d, висота=%.2f, дистанція=%.2f\n", 
+                           statusName, doorStatus, (trace.HitLine->flags & ML_BLOCKING) ? 1 : 0, 
                            trace.HitLine->special, openingHeight, trace.Distance);
+                } else {
+                    Printf("DEBUG CROSSHAIR: Статус дверей: %s (%d), ML_BLOCKING=%d, special=%d, дистанція=%.2f\n", 
+                           statusName, doorStatus, (trace.HitLine->flags & ML_BLOCKING) ? 1 : 0, 
+                           trace.HitLine->special, trace.Distance);
                 }
                 
-                // Формуємо рядок для прицілу без статусу дверей
-                g_crosshairObjectInfo = FStringf("Crosshair: %s (Door) at %.1f units", 
-                                                objectType, distance);
+                // Використовуємо вже визначений статус дверей
+                // Не викликаємо GetDoorStatus повторно, щоб уникнути перезапису статусу після логування
                 
-                Printf("DEBUG: Відображення дверей у прицілі без статусу\n");
+                // Зберігаємо результат у локальній змінній
+                FString doorStatusString = GetDoorStatusString(displayStatus, trace.HitLine);
+                statusName = doorStatusString.GetChars();
+                
+                // Діагностичний вивід статусу дверей
+                Printf("DEBUG: Статус дверей у прицілі: %d, рядок: %s\n", displayStatus, statusName);
+                
+                // Діагностичний вивід для перевірки статусу дверей перед формуванням рядка
+                Printf("DEBUG: Статус дверей перед формуванням рядка: objectType=%s, statusName=%s\n", objectType, statusName);
+                
+                // Формуємо рядок для прицілу з урахуванням статусу дверей
+                g_crosshairObjectInfo = FStringf("Crosshair: %s (%s) at %.1f units", 
+                    objectType, statusName, trace.Distance);
+                
+                // Діагностичний вивід для перевірки статусу дверей у прицілі
+                Printf("DEBUG: Статус дверей у прицілі (g_crosshairObjectInfo): %s\n", g_crosshairObjectInfo.GetChars());
             }
             else
             {
-                // Якщо об'єкт не є дверима, скидаємо статус дверей
-                g_lastDoorStatus = DOOR_UNKNOWN;
-                g_lastDoorLine = nullptr;
-                g_lastDoorSector = nullptr;
-                
                 g_crosshairObjectInfo = FStringf("Crosshair: %s at %.1f units", 
                     objectType, trace.Distance);
-                
-                Printf("DEBUG: Об'єкт не є дверима, скидаємо статус дверей\n");
             }
             
-            // Діагностичний вивід для перевірки статусу дверей у прицілі
-            Printf("DEBUG: Статус дверей у прицілі (g_crosshairObjectInfo): %s\n", g_crosshairObjectInfo.GetChars());
-            
             // Використовуємо локальні змінні для логування
-            AI_Log(AI_DEBUG_INFO, "Crosshair object: %s%s at %.1f units\n", 
-                objectType, 
-                isDoor ? " (Door)" : "", 
-                trace.Distance);
+            const char* logStatus = "";
+            if (isDoor) {
+                logStatus = statusName;
+            }
             
-            // Видаляємо дублюючий лог, оскільки ми вже логуємо цю інформацію вище
+            AI_Log(AI_DEBUG_INFO, "Crosshair object: %s%s%s at %.1f units\n", 
+                objectType, 
+                isDoor ? " (" : "", 
+                logStatus, 
+                trace.Distance);
         }
         else
         {
             // Нічого не знайдено в прицілі
-            // Скидаємо статус дверей, оскільки в прицілі нічого немає
-            g_lastDoorStatus = DOOR_UNKNOWN;
-            g_lastDoorLine = nullptr;
-            g_lastDoorSector = nullptr;
-            
             g_crosshairObjectInfo = "Crosshair: nothing in front of you";
-            Printf("DEBUG: Нічого не знайдено в прицілі, скидаємо статус дверей\n");
-            
             AI_Log(AI_DEBUG_INFO, "Crosshair object: nothing\n");
             
             // Логуємо напрямок променя для діагностики
@@ -1030,32 +1017,6 @@ void UpdateVisibleObjects(player_t* player)
                                 {
                                     va.type = "Door";
                                     visibleDoorsCount++;
-                                    // Перевіряємо чи двері
-                                    bool isDoorByLine = IsDoor(line);
-            
-                                    if (isDoorByLine)
-                                    {
-                                        // Двері знайдено, отримуємо статус
-                                        Printf("DEBUG DOOR: Викликаємо GetDoorStatus для line=%p, sector=%p, player=%p\n", 
-                                               line, line->frontsector, player);
-                                        int doorStatus = GetDoorStatus(line, line->frontsector, player);
-                                        Printf("DEBUG DOOR: GetDoorStatus повернув статус=%d\n", doorStatus);
-                
-                                        // Запам'ятовуємо кут, під яким були знайдені двері
-                                        lastDoorAngle = player->mo->Angles.Yaw.Degrees();
-                                        hadDoorLastFrame = true;
-                                        Printf("DEBUG DOOR: Знайдено двері під кутом %.1f\n", lastDoorAngle);
-                
-                                        // Виводимо статус дверей в приціл
-                                        FString statusStr = GetDoorStatusString((DoorStatus)doorStatus, line);
-                                        Printf("DEBUG DOOR: Статус дверей: %s\n", statusStr.GetChars());
-                                        g_crosshairObjectInfo = statusStr;
-                                    }
-                                    else
-                                    {
-                                        // Якщо це не двері, але стіна, скидаємо флаг дверей
-                                        hadDoorLastFrame = false;
-                                    }
                                 }
                                 else
                                 {

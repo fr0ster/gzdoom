@@ -39,122 +39,48 @@ bool IsDoor(line_t* line)
 {
     if (!line) return false;
     
-    // Перевіряємо чи це спеціальний тип дверей
+    // Діагностичний вивід для перевірки лінії
+    Printf("DEBUG IsDoor: Перевірка лінії %d, flags=0x%x, special=%d, backsector=%p, frontsector=%p\n", 
+           line->Index(), line->flags, line->special, 
+           static_cast<void*>(line->backsector), static_cast<void*>(line->frontsector));
+    
+    // Перевіряємо чи це двері за спеціальним типом лінії
     if (line->special == Door_Raise || 
         line->special == Door_Open || 
         line->special == Door_Close || 
         line->special == Door_LockedRaise || 
         line->special == Generic_Door)
     {
-        Printf("DEBUG IsDoor: Лінія %d є дверима (спеціальний тип %d)\n", line->Index(), line->special);
+        Printf("DEBUG IsDoor: Лінія %d є дверима за спеціальним типом %d\n", line->Index(), line->special);
         return true;
-    }
-    
-    // Перевіряємо чи є задній сектор (стіни не мають заднього сектора)
-    if (!line->backsector)
-    {
-        // Додаткова перевірка для дверей без backsector
-        // Перевіряємо чи є special значення, характерні для дверей
-        if (line->special > 0)
-        {
-            // Типові значення для дверей зазвичай в діапазоні 1-10, 12-14, 26-33, 46, 61, 63, 90, 105, 108
-            bool isDoorSpecial = false;
-            
-            // Діапазони значень special, характерні для дверей
-            if ((line->special >= 1 && line->special <= 10) ||
-                (line->special >= 12 && line->special <= 14) ||
-                (line->special >= 26 && line->special <= 33) ||
-                line->special == 46 || line->special == 61 || 
-                line->special == 63 || line->special == 90 || 
-                line->special == 105 || line->special == 108)
-            {
-                isDoorSpecial = true;
-            }
-            
-            if (isDoorSpecial)
-            {
-                Printf("DEBUG IsDoor: Лінія %d є дверима (має special=%d, характерний для дверей)\n", 
-                       line->Index(), line->special);
-                return true;
-            }
-        }
-        
-        // Якщо немає backsector і не має спеціальних значень для дверей, це стіна
-        Printf("DEBUG IsDoor: Лінія %d НЕ є дверима (немає backsector і special не характерний для дверей - це стіна)\n", line->Index());
-        return false; // Стіна, а не двері
     }
     
     // Перевіряємо чи це заблоковані двері (мають прапорець ML_BLOCKING)
     if (line->flags & ML_BLOCKING)
     {
-        // Додаткова перевірка для уникнення хибних спрацювань
-        // Якщо лінія блокуюча і має backsector, перевіряємо також геометрію
-        double frontFloor = line->frontsector->floorplane.ZatPoint(line->v1->fPos());
-        double backFloor = line->backsector->floorplane.ZatPoint(line->v1->fPos());
-        double frontCeil = line->frontsector->ceilingplane.ZatPoint(line->v1->fPos());
-        double backCeil = line->backsector->ceilingplane.ZatPoint(line->v1->fPos());
-        
-        // Перевіряємо текстуру для додаткової перевірки
-        FTextureID midtex = line->sidedef[0]->GetTexture(side_t::mid);
-        bool hasMidTexture = midtex.isValid() && midtex != FNullTextureID();
-        
-        // Якщо є значна різниця висот або середня текстура, це двері
-        if ((fabs(frontCeil - backCeil) > 1.0 || fabs(frontFloor - backFloor) > 1.0) || hasMidTexture)
-        {
-            Printf("DEBUG IsDoor: Лінія %d є заблокованими дверима (ML_BLOCKING + геометрія/текстура)\n", line->Index());
-            return true;
-        }
-        
-        // Якщо немає різниці висот і немає середньої текстури, це може бути просто блокуюча стіна
-        Printf("DEBUG IsDoor: Лінія %d має ML_BLOCKING, але не має різниці висот або середньої текстури - не двері\n", line->Index());
-        return false;
-    }
-    
-    // Перевіряємо чи є середня текстура (двері часто мають середню текстуру)
-    if (line->sidedef[0] && line->sidedef[0]->GetTexture(side_t::mid).isValid())
-    {
-        FTextureID midtex = line->sidedef[0]->GetTexture(side_t::mid);
-        if (midtex != FNullTextureID())
-        {
-            // Додаткова перевірка для уникнення хибних спрацювань
-            // Перевіряємо також геометрію
-            double frontFloor = line->frontsector->floorplane.ZatPoint(line->v1->fPos());
-            double backFloor = line->backsector->floorplane.ZatPoint(line->v1->fPos());
-            double frontCeil = line->frontsector->ceilingplane.ZatPoint(line->v1->fPos());
-            double backCeil = line->backsector->ceilingplane.ZatPoint(line->v1->fPos());
-            
-            // Якщо є значна різниця висот, це двері
-            if (fabs(frontCeil - backCeil) > 1.0 || fabs(frontFloor - backFloor) > 1.0)
-            {
-                Printf("DEBUG IsDoor: Лінія %d є дверима (має середню текстуру + різниця висот)\n", line->Index());
-                return true;
-            }
-            
-            // Якщо немає різниці висот, це може бути просто вікно або декорація
-            Printf("DEBUG IsDoor: Лінія %d має середню текстуру, але не має різниці висот - не двері\n", line->Index());
-            return false;
-        }
+        // Якщо лінія блокуюча, це можуть бути заблоковані двері
+        Printf("DEBUG IsDoor: Лінія %d є заблокованими дверима (ML_BLOCKING)\n", line->Index());
+        return true;
     }
     
     // Перевіряємо чи це двері за геометрією
-    if (line->frontsector && line->backsector)
+    if (line->backsector && line->frontsector)
     {
-        // Перевіряємо чи є значна різниця висот підлоги або стелі
+        // Перевіряємо чи є різниця висот підлоги або стелі
         double frontFloor = line->frontsector->floorplane.ZatPoint(line->v1->fPos());
         double backFloor = line->backsector->floorplane.ZatPoint(line->v1->fPos());
         double frontCeil = line->frontsector->ceilingplane.ZatPoint(line->v1->fPos());
         double backCeil = line->backsector->ceilingplane.ZatPoint(line->v1->fPos());
         
-        // Двері мають значну різницю висот (більше 16 юнітів)
-        if (fabs(frontCeil - backCeil) > 16.0 || fabs(frontFloor - backFloor) > 16.0)
+        if (fabs(frontCeil - backCeil) > 1.0 || fabs(frontFloor - backFloor) > 1.0)
         {
-            Printf("DEBUG IsDoor: Лінія %d є дверима за геометрією (значна різниця висот: frontFloor=%.2f, backFloor=%.2f, frontCeil=%.2f, backCeil=%.2f)\n", 
+            Printf("DEBUG IsDoor: Лінія %d є дверима за геометрією (frontFloor=%.2f, backFloor=%.2f, frontCeil=%.2f, backCeil=%.2f)\n", 
                    line->Index(), frontFloor, backFloor, frontCeil, backCeil);
             return true;
         }
     }
     
-    Printf("DEBUG IsDoor: Лінія %d НЕ є дверима (не відповідає жодному критерію)\n", line->Index());
+    Printf("DEBUG IsDoor: Лінія %d НЕ є дверима\n", line->Index());
     return false;
 }
 
@@ -267,7 +193,23 @@ int GetDoorStatus(line_t* line, sector_t* sector, player_t* player)
     // Перевіряємо різні умови для заблокованих дверей
     // Спочатку перевіряємо прямі ознаки заблокованих дверей
     
-    // Перевірка на спеціальні типи дверей - найвищий пріоритет
+    // Перевірка на ML_BLOCKING - це одна з найважливіших ознак заблокованих дверей
+    if (line->flags & ML_BLOCKING)
+    {
+        Printf("DEBUG GetDoorStatus: Двері заблоковані прапорцем ML_BLOCKING\n");
+        needsKey = true;
+        lockNumber = 1; // За замовчуванням вважаємо, що потрібен синій ключ
+    }
+    
+    // Перевірка на locknumber - прямий показник необхідності ключа
+    if (line->locknumber > 0)
+    {
+        Printf("DEBUG GetDoorStatus: Двері заблоковані полем locknumber=%d\n", line->locknumber);
+        needsKey = true;
+        lockNumber = line->locknumber;
+    }
+    
+    // Перевірка на спеціальні типи дверей
     if (line->special == Door_LockedRaise)
     {
         Printf("DEBUG GetDoorStatus: Двері заблоковані типом Door_LockedRaise, ключ=%d\n", line->args[3]);
@@ -279,22 +221,6 @@ int GetDoorStatus(line_t* line, sector_t* sector, player_t* player)
         Printf("DEBUG GetDoorStatus: Двері заблоковані типом Generic_Door, ключ=%d\n", line->args[4]);
         needsKey = true;
         lockNumber = line->args[4]; // Номер ключа в args[4]
-    }
-    
-    // Перевірка на locknumber - прямий показник необхідності ключа
-    if (!needsKey && line->locknumber > 0)
-    {
-        Printf("DEBUG GetDoorStatus: Двері заблоковані полем locknumber=%d\n", line->locknumber);
-        needsKey = true;
-        lockNumber = line->locknumber;
-    }
-    
-    // Перевірка на ML_BLOCKING - це одна з найважливіших ознак заблокованих дверей
-    if (!needsKey && (line->flags & ML_BLOCKING))
-    {
-        Printf("DEBUG GetDoorStatus: Двері заблоковані прапорцем ML_BLOCKING\n");
-        needsKey = true;
-        lockNumber = 1; // За замовчуванням вважаємо, що потрібен синій ключ
     }
     
     // Перевірка текстури дверей для визначення типу ключа
@@ -327,15 +253,22 @@ int GetDoorStatus(line_t* line, sector_t* sector, player_t* player)
             }
         }
     }
-    
     // Якщо двері потребують ключа, але ми не змогли визначити якого саме
     if (needsKey && lockNumber == 0)
     {
         Printf("DEBUG GetDoorStatus: Не вдалося визначити тип ключа, використовуємо синій за замовчуванням\n");
         lockNumber = 1; // За замовчуванням синій ключ, якщо не можемо визначити
     }
-    
-    Printf("DEBUG Blocked door with flags: lockNumber=%d\n", lockNumber);
+                    }
+                }
+                else
+                {
+                    lockNumber = 1; // За замовчуванням синій ключ, якщо не можемо визначити
+                }
+            }
+            Printf("DEBUG Blocked door with flags: lockNumber=%d\n", lockNumber);
+        }
+    }
     
     // Якщо двері потребують ключа і гравець переданий, перевіряємо наявність ключа
     if (needsKey)
@@ -603,12 +536,10 @@ TArray<DoorInfo> GetVisibleDoors(player_t* player)
     return visibleDoors;
 }
 
+// Функція для визначення дверей перед гравцем
 DoorInfo* GetDoorInFront(player_t* player, double maxDistance)
 {
     if (!player || !player->mo) return nullptr;
-    
-    // Лічильник знайдених дверей на лінії прицілу
-    int doorCount = 0;
     
     // Отримуємо позицію і напрямок гравця
     DVector3 playerPos = player->mo->Pos();
@@ -617,265 +548,49 @@ DoorInfo* GetDoorInFront(player_t* player, double maxDistance)
     // Вектор напрямку погляду
     DVector2 lookDir = playerAngle.ToVector();
     
-    // Структура для зберігання інформації про двері з найвищим пріоритетом
-    struct HighPriorityDoor {
-        line_t* line = nullptr;
-        sector_t* sector = nullptr;
-        int status = DOOR_UNKNOWN;
-        int priority = -1;
-        double distance = 1024.0;
-        DVector2 position;
-        bool isPassable = false;
-        bool isRealDoor = false;  // Додатковий прапорець для відслідковування справжніх дверей
-    } highPriorityDoor;
+    // Отримуємо список видимих дверей
+    TArray<DoorInfo> visibleDoors = GetVisibleDoors(player);
     
-    // Виконуємо трасування променя вперед для виявлення першої двері
-    FLineTraceData trace;
-    double traceDistance = maxDistance;
+    // Статичний об'єкт для зберігання результату
+    static DoorInfo doorResult;
+    DoorInfo* bestDoor = nullptr;
+    double bestScore = -1.0;
     
-    // Діагностичний вивід перед трасуванням
-    Printf("DEBUG DOOR FRONT: Починаємо трасування від позиції (%.2f, %.2f, %.2f) з кутом %.2f\n", 
-           player->mo->Pos().X, player->mo->Pos().Y, player->mo->Pos().Z, player->mo->Angles.Yaw.Degrees());
-    
-    // Трасування променя від гравця вперед
-    P_LineTrace(player->mo, 
-                player->mo->Angles.Yaw, 
-                traceDistance, 
-                DAngle::fromDeg(0.0), // pitch
-                TRF_ALLACTORS, // Дозволяємо проходити крізь акторів
-                0.0, // offsetz
-                0.0, // offsetforward
-                0.0, // offsetside
-                &trace);
-               
-    // Діагностичний вивід після трасування
-    Printf("DEBUG DOOR FRONT: HitType=%d, Distance=%.2f, HitLocation=(%.2f, %.2f, %.2f)\n", 
-           trace.HitType, trace.Distance, trace.HitLocation.X, trace.HitLocation.Y, trace.HitLocation.Z);
-           
-    // Перевіряємо тип об'єкта, в який потрапив промінь
-    if (trace.HitType == TRACE_HitWall && trace.HitLine) {
-        // Перевіряємо чи є задній сектор (стіни не мають заднього сектора)
-        bool hasBackSector = (trace.HitLine->backsector != nullptr);
-        
-        // Перевіряємо чи є спеціальний тип дверей
-        bool isDoorSpecial = (trace.HitLine->special == Door_Raise || 
-                            trace.HitLine->special == Door_Open || 
-                            trace.HitLine->special == Door_Close || 
-                            trace.HitLine->special == Door_LockedRaise || 
-                            trace.HitLine->special == Generic_Door);
-        
-        Printf("DEBUG DOOR FRONT: Перший об'єкт: лінія %d, має backsector: %d, спеціальний тип дверей: %d\n", 
-               trace.HitLine->Index(), hasBackSector, isDoorSpecial);
-    }
-    
-    // Перевіряємо, чи знайшли двері
-    if (trace.HitType == TRACE_HitWall && trace.HitLine && IsDoor(trace.HitLine))
+    // Перевіряємо кожні двері
+    for (unsigned int i = 0; i < visibleDoors.Size(); i++)
     {
-        doorCount++;
+        const DoorInfo& door = visibleDoors[i];
         
-        // Визначаємо сектор дверей
-        sector_t* doorSector = trace.HitLine->frontsector;
-        if (trace.HitLine->backsector && 
-            (trace.HitLine->frontsector->floorplane.ZatPoint(trace.HitLocation.XY()) > 
-             trace.HitLine->backsector->floorplane.ZatPoint(trace.HitLocation.XY())))
+        // Пропускаємо двері, які занадто далеко
+        if (door.distance > maxDistance) continue;
+        
+        // Обчислюємо центр дверей
+        DVector2 doorCenter = (door.line->v1->fPos() + door.line->v2->fPos()) * 0.5;
+        
+        // Напрямок від гравця до дверей
+        DVector2 toDoor = doorCenter - DVector2(playerPos.X, playerPos.Y);
+        toDoor.MakeUnit();
+        
+        // Обчислюємо кут між напрямком погляду і напрямком до дверей
+        double dotProduct = lookDir | toDoor; // скалярний добуток
+        
+        // Оцінка базується на відстані та куті
+        // Двері перед гравцем мають високий добуток (> 0.7) і малу відстань
+        double score = dotProduct - (door.distance / maxDistance * 0.3);
+        
+        // Якщо двері не перед гравцем, ігноруємо їх
+        if (dotProduct < 0.7) continue;
+        
+        // Знаходимо найкращі двері перед гравцем
+        if (score > bestScore)
         {
-            doorSector = trace.HitLine->backsector;
-        }
-        
-        // Отримуємо статус дверей
-        int doorStatus = GetDoorStatus(trace.HitLine, doorSector, player);
-        int doorPriority = GetDoorStatusPriority(doorStatus);
-        
-        // Зберігаємо інформацію про першу знайдену двері
-        highPriorityDoor.line = trace.HitLine;
-        highPriorityDoor.sector = doorSector;
-        highPriorityDoor.status = doorStatus;
-        highPriorityDoor.priority = doorPriority;
-        highPriorityDoor.distance = trace.Distance;
-        highPriorityDoor.position = trace.HitLocation.XY();
-        highPriorityDoor.isPassable = IsDoorPassable(trace.HitLine, doorSector);
-        highPriorityDoor.isRealDoor = true; // Це справжні двері, не стіна
-        
-        Printf("DEBUG DOOR FRONT: Знайдено першу двері, статус=%d, пріоритет=%d, двері №%d\n", 
-               doorStatus, doorPriority, doorCount);
-        
-        // Якщо знайдені двері не заблоковані, виконуємо додаткове трасування
-        // для пошуку дверей за першими знайденими
-        if (doorStatus != DOOR_LOCKED)
-        {
-            // Виконуємо додаткове трасування, починаючи від точки перетину з першими дверима
-            // і продовжуючи на 10-30 юнітів далі
-            FLineTraceData additionalTrace;
-            double additionalDistance = 30.0; // Відстань для додаткового трасування
-            
-            // Обчислюємо відстань до першої двері
-            double doorDistance = trace.Distance;
-            
-            // Обчислюємо зсув для початку трасування за дверима
-            // Використовуємо TRF_ABSOFFSET для позиціонування відносно гравця
-            double offsetForward = lookDir.X * (doorDistance + 1.0);
-            double offsetSide = lookDir.Y * (doorDistance + 1.0);
-            
-            Printf("DEBUG DOOR FRONT: Виконуємо додаткове трасування з зсувом (%.2f, %.2f)\n", 
-                   offsetForward, offsetSide);
-            
-            // Виконуємо додаткове трасування з використанням зсуву
-            P_LineTrace(player->mo, 
-                       player->mo->Angles.Yaw, 
-                       additionalDistance, 
-                       DAngle::fromDeg(0.0), // pitch
-                       TRF_ALLACTORS | TRF_ABSOFFSET, // Використовуємо абсолютний зсув
-                       0.0, // offsetz
-                       offsetForward, // offsetforward - зсув вперед до точки за дверима
-                       offsetSide, // offsetside - зсув вбік до точки за дверима
-                       &additionalTrace);
-            
-            // Перевіряємо тип об'єкта, в який потрапив промінь при додатковому трасуванні
-            if (additionalTrace.HitType == TRACE_HitWall && additionalTrace.HitLine) {
-                // Перевіряємо чи є задній сектор (стіни не мають заднього сектора)
-                bool hasBackSector = (additionalTrace.HitLine->backsector != nullptr);
-                
-                // Перевіряємо чи є спеціальний тип дверей
-                bool isDoorSpecial = (additionalTrace.HitLine->special == Door_Raise || 
-                                    additionalTrace.HitLine->special == Door_Open || 
-                                    additionalTrace.HitLine->special == Door_Close || 
-                                    additionalTrace.HitLine->special == Door_LockedRaise || 
-                                    additionalTrace.HitLine->special == Generic_Door);
-                
-                Printf("DEBUG DOOR FRONT: Додатковий об'єкт: лінія %d, має backsector: %d, спеціальний тип дверей: %d\n", 
-                       additionalTrace.HitLine->Index(), hasBackSector, isDoorSpecial);
-            }
-            
-            // Перевіряємо, чи знайшли додаткові двері
-            if (additionalTrace.HitType == TRACE_HitWall && additionalTrace.HitLine && IsDoor(additionalTrace.HitLine))
-            {
-                doorCount++; // Збільшуємо лічильник дверей
-                
-                // Визначаємо сектор додаткових дверей
-                sector_t* additionalDoorSector = additionalTrace.HitLine->frontsector;
-                if (additionalTrace.HitLine->backsector && 
-                    (additionalTrace.HitLine->frontsector->floorplane.ZatPoint(additionalTrace.HitLocation.XY()) > 
-                     additionalTrace.HitLine->backsector->floorplane.ZatPoint(additionalTrace.HitLocation.XY())))
-                {
-                    additionalDoorSector = additionalTrace.HitLine->backsector;
-                }
-                
-                // Отримуємо статус додаткових дверей
-                int additionalDoorStatus = GetDoorStatus(additionalTrace.HitLine, additionalDoorSector, player);
-                int additionalDoorPriority = GetDoorStatusPriority(additionalDoorStatus);
-                
-                Printf("DEBUG DOOR FRONT: Знайдено додаткові двері, статус=%d, пріоритет=%d, двері №%d\n", 
-                       additionalDoorStatus, additionalDoorPriority, doorCount);
-                
-                // Якщо додаткові двері мають вищий пріоритет (наприклад, LOCKED),
-                // використовуємо їх замість перших знайдених
-                if (additionalDoorPriority > highPriorityDoor.priority)
-                {
-                    highPriorityDoor.line = additionalTrace.HitLine;
-                    highPriorityDoor.sector = additionalDoorSector;
-                    highPriorityDoor.status = additionalDoorStatus;
-                    highPriorityDoor.priority = additionalDoorPriority;
-                    highPriorityDoor.distance = trace.Distance + additionalTrace.Distance; // Загальна відстань
-                    highPriorityDoor.position = additionalTrace.HitLocation.XY();
-                    highPriorityDoor.isPassable = IsDoorPassable(additionalTrace.HitLine, additionalDoorSector);
-                    
-                    Printf("DEBUG DOOR FRONT: Використовуємо додаткові двері з вищим пріоритетом\n");
-                }
-            }
-        }
-    }
-    else
-    {
-        // Якщо не знайшли двері через трасування, використовуємо старий метод
-        // Отримуємо список видимих дверей
-        TArray<DoorInfo> visibleDoors = GetVisibleDoors(player);
-        
-        // Статичний об'єкт для зберігання результату
-        static DoorInfo doorResult;
-        DoorInfo* bestDoor = nullptr;
-        double bestScore = -1.0;
-    
-        // Перевіряємо кожні двері
-        for (unsigned int i = 0; i < visibleDoors.Size(); i++)
-        {
-            const DoorInfo& door = visibleDoors[i];
-            
-            // Пропускаємо двері, які занадто далеко
-            if (door.distance > maxDistance) continue;
-            
-            // Обчислюємо центр дверей
-            DVector2 doorCenter = (door.line->v1->fPos() + door.line->v2->fPos()) * 0.5;
-            
-            // Напрямок від гравця до дверей
-            DVector2 toDoor = doorCenter - DVector2(playerPos.X, playerPos.Y);
-            toDoor.MakeUnit();
-            
-            // Обчислюємо кут між напрямком погляду і напрямком до дверей
-            double dotProduct = lookDir | toDoor; // скалярний добуток
-            
-            // Оцінка базується на відстані та куті
-            // Двері перед гравцем мають високий добуток (> 0.7) і малу відстань
-            double score = dotProduct - (door.distance / maxDistance * 0.3);
-            
-            // Якщо двері не перед гравцем, ігноруємо їх
-            if (dotProduct < 0.7) continue;
-            
-            // Знаходимо найкращі двері перед гравцем
-            if (score > bestScore)
-            {
-                bestScore = score;
-                doorResult = door;
-                bestDoor = &doorResult;
-            }
-        }
-        
-        // Якщо знайшли двері через старий метод, використовуємо їх
-        if (bestDoor)
-        {
-            highPriorityDoor.line = bestDoor->line;
-            highPriorityDoor.sector = bestDoor->sector;
-            highPriorityDoor.status = bestDoor->status;
-            highPriorityDoor.priority = GetDoorStatusPriority(bestDoor->status);
-            highPriorityDoor.distance = bestDoor->distance;
-            highPriorityDoor.position = (bestDoor->line->v1->fPos() + bestDoor->line->v2->fPos()) * 0.5;
-            highPriorityDoor.isPassable = bestDoor->isPassable;
+            bestScore = score;
+            doorResult = door;
+            bestDoor = &doorResult;
         }
     }
     
-    // Повертаємо інформацію про двері з найвищим пріоритетом
-    if (highPriorityDoor.line && highPriorityDoor.sector)
-    {
-        static DoorInfo result;
-        result.line = highPriorityDoor.line;
-        result.sector = highPriorityDoor.sector;
-        result.status = highPriorityDoor.status;
-        result.distance = highPriorityDoor.distance;
-        result.position = highPriorityDoor.position;
-        result.isVisible = true;
-        result.isPassable = highPriorityDoor.isPassable;
-        result.keyType = 0; // За замовчуванням ключ не потрібен
-        
-        // Підсумковий діагностичний вивід
-        Printf("DEBUG DOOR FRONT: ПІДСУМОК - Знайдено %d дверей, обрано двері з статусом %d (лінія %d)\n", 
-               doorCount, result.status, result.line->Index());
-        
-        // Перевіряємо чи є спеціальний тип дверей
-        bool isDoorSpecial = (result.line->special == Door_Raise || 
-                             result.line->special == Door_Open || 
-                             result.line->special == Door_Close || 
-                             result.line->special == Door_LockedRaise || 
-                             result.line->special == Generic_Door);
-        
-        Printf("DEBUG DOOR FRONT: Обрані двері: має backsector: %d, спеціальний тип дверей: %d, справжні двері: %d\n", 
-               (result.line->backsector != nullptr), isDoorSpecial, highPriorityDoor.isRealDoor);
-        
-        return &result;
-    }
-    
-    // Підсумковий діагностичний вивід якщо двері не знайдено
-    Printf("DEBUG DOOR FRONT: ПІДСУМОК - Двері не знайдено\n");
-    
-    return nullptr;
+    return bestDoor;
 }
 
 // Функція для логування інформації про двері та об'єкти перед гравцем

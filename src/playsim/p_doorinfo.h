@@ -14,6 +14,7 @@ struct DoorInfo
     int status;           // Статус дверей (відкриті, закриті, відкриваються, закриваються)
     double distance;      // Відстань від гравця до дверей
     int keyType;          // Тип ключа, необхідний для відкриття дверей (0 - не потрібен ключ)
+    DVector2 position;    // Позиція дверей у світі
 };
 
 // Статуси дверей
@@ -40,10 +41,21 @@ bool IsDoor(line_t* line);
 // Функція для визначення статусу дверей
 int GetDoorStatus(line_t* line, sector_t* sector);
 
+// Функція для визначення пріоритету статусу дверей
+int GetDoorStatusPriority(int doorStatus);
+
 // Функція для визначення, чи можна пройти через двері
 bool IsDoorPassable(line_t* line, sector_t* sector);
 
 // Функції для роботи з thinker-ами дверей видалені, оскільки ми використовуємо лише властивості line_t та sector_t
+
+// Глобальні змінні для зберігання останнього статусу дверей
+extern int g_lastDoorStatus;
+extern line_t* g_lastDoorLine;
+extern sector_t* g_lastDoorSector;
+
+// Функція для отримання рядка статусу дверей
+FString GetDoorStatusString(int doorStatus, line_t* line);
 
 // Функція для визначення дверей перед гравцем
 DoorInfo* GetDoorInFront(player_t* player, double maxDistance = 200.0);
@@ -59,3 +71,8 @@ FString GetDoorStatusString(int doorStatus, line_t* line);
 
 // Функція для логування інформації про двері
 void LogDoorInfo(player_t* player);
+
+// Глобальні змінні для зберігання останнього статусу дверей
+extern int g_lastDoorStatus;
+extern line_t* g_lastDoorLine;
+extern sector_t* g_lastDoorSector;
